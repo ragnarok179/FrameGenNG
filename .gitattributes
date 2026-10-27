@@ -1,0 +1,16 @@
+* text=auto
+
+*.md text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.ps1 text eol=lf
+*.psm1 text eol=lf
+*.lua text eol=lf
+*.patch text eol=lf
+*.ini text eol=lf
+*.cmd text eol=crlf
+
+*.dll binary
+*.zip binary
+

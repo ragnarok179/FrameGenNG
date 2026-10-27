@@ -1,0 +1,20 @@
+name: Validate FrameGenNG
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run installer tests
+        shell: pwsh
+        run: ./tests/run-tests.ps1
+      - name: Refresh and verify payload manifest
+        shell: pwsh
+        run: |
+          ./scripts/Update-PayloadManifest.ps1
+          git diff --exit-code -- payload/manifest.json
+
