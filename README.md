@@ -27,8 +27,6 @@ Frame Generation creates additional images between the frames rendered by the ga
 
 The multiplier does not replace a good base frame rate. A game running at 5 base FPS will not feel smooth simply because 4× reports up to 20 displayed FPS. Low base FPS can still cause high latency and visible interpolation artifacts, so 2× remains the recommended setting.
 
-To configure it, open **Options → Graphics** in BeamNG, enable **DLSS**, then use the Frame Generation controls displayed directly below the DLSS settings.
-
 BeamNG's FPS counter only reports the base frames rendered by the game. Press **Alt+R** to open the NVIDIA App performance overlay and see the displayed frame rate including generated frames.
 
 For more stable results, limit the base frame rate instead of leaving it unlimited. Adjust the limit or graphics settings so normal GPU usage stays around 80–90% in the NVIDIA overlay (alt+r). This leaves some performance headroom for demanding scenes and helps keep the frame rate consistent.
@@ -40,6 +38,7 @@ For more stable results, limit the base frame rate instead of leaving it unlimit
 3. Open `FrameGenNG Manager.vbs`.
 4. Select **Install**.
 5. Start BeamNG in DirectX 12, enable DLSS, then configure Frame Generation below the DLSS settings.
+6. To configure it, open **Options → Graphics** in BeamNG, enable **DLSS**, then use the Frame Generation controls displayed directly below the DLSS settings.
 
 BeamNG will warn about `dxgi.dll` and, on RTX 20/30, `d3d12.dll`. This is expected: these proxy libraries load the FrameGenNG graphics layer. Select **Cancel** in that warning if you do not want BeamNG to show it again.
 

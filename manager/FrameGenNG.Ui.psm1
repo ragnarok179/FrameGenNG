@@ -1,6 +1,32 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+function Get-FrameGenNGManagerLayout {
+    param(
+        [Parameter(Mandatory)][int]$StatusHeight,
+        [bool]$Expanded = $false
+    )
+
+    $statusTop = 23
+    $effectiveStatusHeight = [Math]::Max(38, $StatusHeight)
+    $actionTop = $statusTop + $effectiveStatusHeight + 7
+    $updateTop = $actionTop + 42
+    $secondaryActionTop = $updateTop + 44
+    $logTop = $secondaryActionTop + 40
+    $footerTop = if ($Expanded) { $logTop + 148 } else { $secondaryActionTop + 48 }
+
+    return [pscustomobject]@{
+        StatusTop = $statusTop
+        StatusHeight = $effectiveStatusHeight
+        ActionTop = $actionTop
+        UpdateTop = $updateTop
+        SecondaryActionTop = $secondaryActionTop
+        LogTop = $logTop
+        FooterTop = $footerTop
+        FormHeight = $footerTop + 56
+    }
+}
+
 function New-FrameGenNGDialog {
     param(
         [Parameter(Mandatory)][string]$Title,
@@ -53,6 +79,7 @@ function New-FrameGenNGButton {
 }
 
 Export-ModuleMember -Function @(
+    'Get-FrameGenNGManagerLayout',
     'New-FrameGenNGDialog',
     'New-FrameGenNGButton'
 )

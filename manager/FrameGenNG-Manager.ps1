@@ -86,15 +86,12 @@ $colors = @{
     Danger = [System.Drawing.Color]::FromArgb(192, 0, 0)
 }
 
-$collapsedFormHeight = 258
-$expandedFormHeight = 398
-$collapsedFooterTop = 202
-$expandedFooterTop = 342
+$initialLayout = Get-FrameGenNGManagerLayout -StatusHeight 38
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "FrameGenNG v$(Get-FrameGenNGVersion)"
 $form.StartPosition = 'CenterScreen'
-$form.ClientSize = New-Object System.Drawing.Size(470, $collapsedFormHeight)
+$form.ClientSize = New-Object System.Drawing.Size(470, $initialLayout.FormHeight)
 $form.BackColor = $colors.Window
 $form.ForeColor = $colors.Text
 $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
@@ -108,8 +105,8 @@ $statusDot.Visible = $false
 
 $statusText = New-Object System.Windows.Forms.Label
 $statusText.Text = 'Checking…'
-$statusText.Location = New-Object System.Drawing.Point(31, 23)
-$statusText.Size = New-Object System.Drawing.Size(408, 38)
+$statusText.Location = New-Object System.Drawing.Point(31, $initialLayout.StatusTop)
+$statusText.Size = New-Object System.Drawing.Size(408, $initialLayout.StatusHeight)
 $statusText.ForeColor = $colors.Text
 $form.Controls.Add($statusText)
 
@@ -118,7 +115,7 @@ $gamePathText.Visible = $false
 
 function New-ActionButton {
     param([string]$Text, [int]$X, [int]$Width, [System.Drawing.Color]$BackColor)
-    return New-FrameGenNGButton -Text $Text -X $X -Y 68 -Width $Width -Height 30 -Colors $colors -Style Secondary
+    return New-FrameGenNGButton -Text $Text -X $X -Y $initialLayout.ActionTop -Width $Width -Height 30 -Colors $colors -Style Secondary
 }
 
 $installButton = New-ActionButton -Text 'Install' -X 31 -Width 104 -BackColor $colors.Accent
@@ -126,16 +123,16 @@ $repairButton = New-ActionButton -Text 'Repair' -X 143 -Width 104 -BackColor $co
 $uninstallButton = New-ActionButton -Text 'Uninstall' -X 255 -Width 104 -BackColor $colors.PanelRaised
 $form.Controls.AddRange(@($installButton, $repairButton, $uninstallButton))
 
-$updateButton = New-FrameGenNGButton -Text 'Check for updates' -X 31 -Y 110 -Width 328 -Height 30 -Colors $colors
+$updateButton = New-FrameGenNGButton -Text 'Check for updates' -X 31 -Y $initialLayout.UpdateTop -Width 328 -Height 30 -Colors $colors
 $form.Controls.Add($updateButton)
 
-$restorePointsButton = New-FrameGenNGButton -Text 'Restore points…' -X 31 -Y 154 -Width 130 -Height 28 -Colors $colors
-$diagnosticButton = New-FrameGenNGButton -Text 'Diagnostics…' -X 169 -Y 154 -Width 112 -Height 28 -Colors $colors
-$detailsButton = New-FrameGenNGButton -Text 'Details ▸' -X 289 -Y 154 -Width 70 -Height 28 -Colors $colors
+$restorePointsButton = New-FrameGenNGButton -Text 'Restore points…' -X 31 -Y $initialLayout.SecondaryActionTop -Width 130 -Height 28 -Colors $colors
+$diagnosticButton = New-FrameGenNGButton -Text 'Diagnostics…' -X 169 -Y $initialLayout.SecondaryActionTop -Width 112 -Height 28 -Colors $colors
+$detailsButton = New-FrameGenNGButton -Text 'Details ▸' -X 289 -Y $initialLayout.SecondaryActionTop -Width 70 -Height 28 -Colors $colors
 $form.Controls.AddRange(@($restorePointsButton, $diagnosticButton, $detailsButton))
 
 $footer = New-Object System.Windows.Forms.Panel
-$footer.Location = New-Object System.Drawing.Point(0, $collapsedFooterTop)
+$footer.Location = New-Object System.Drawing.Point(0, $initialLayout.FooterTop)
 $footer.Size = New-Object System.Drawing.Size(470, 56)
 $footer.BackColor = [System.Drawing.SystemColors]::Control
 $form.Controls.Add($footer)
@@ -156,7 +153,7 @@ $userPathBox = New-Object System.Windows.Forms.TextBox
 $userPathBox.Visible = $false
 
 $logBox = New-Object System.Windows.Forms.TextBox
-$logBox.Location = New-Object System.Drawing.Point(31, 194)
+$logBox.Location = New-Object System.Drawing.Point(31, $initialLayout.LogTop)
 $logBox.Size = New-Object System.Drawing.Size(408, 130)
 $logBox.Multiline = $true
 $logBox.ReadOnly = $true
@@ -175,20 +172,37 @@ $script:updateJob = $null
 $script:updateCheckWasManual = $false
 $script:detailsExpanded = $false
 
-function Set-DetailsExpanded {
-    param([Parameter(Mandatory)][bool]$Expanded)
+function Update-MainLayout {
+    $preferredStatusHeight = $statusText.GetPreferredSize(
+        [System.Drawing.Size]::new($statusText.Width, 0)
+    ).Height
+    $layout = Get-FrameGenNGManagerLayout -StatusHeight $preferredStatusHeight -Expanded $script:detailsExpanded
 
     $form.SuspendLayout()
     try {
-        $script:detailsExpanded = $Expanded
-        $logBox.Visible = $Expanded
-        $detailsButton.Text = if ($Expanded) { 'Details ▾' } else { 'Details ▸' }
-        $footer.Top = if ($Expanded) { $expandedFooterTop } else { $collapsedFooterTop }
-        $targetHeight = if ($Expanded) { $expandedFormHeight } else { $collapsedFormHeight }
-        $form.ClientSize = New-Object System.Drawing.Size(470, $targetHeight)
+        $statusText.Height = $layout.StatusHeight
+        foreach ($button in @($installButton, $repairButton, $uninstallButton)) {
+            $button.Top = $layout.ActionTop
+        }
+        $updateButton.Top = $layout.UpdateTop
+        foreach ($button in @($restorePointsButton, $diagnosticButton, $detailsButton)) {
+            $button.Top = $layout.SecondaryActionTop
+        }
+        $logBox.Top = $layout.LogTop
+        $footer.Top = $layout.FooterTop
+        $form.ClientSize = New-Object System.Drawing.Size(470, $layout.FormHeight)
     } finally {
         $form.ResumeLayout($true)
     }
+}
+
+function Set-DetailsExpanded {
+    param([Parameter(Mandatory)][bool]$Expanded)
+
+    $script:detailsExpanded = $Expanded
+    $logBox.Visible = $Expanded
+    $detailsButton.Text = if ($Expanded) { 'Details ▾' } else { 'Details ▸' }
+    Update-MainLayout
 }
 
 function Set-BusyState {
@@ -436,7 +450,7 @@ function Complete-UpdateCheck {
             $updateButton.Text = "Update to v$($script:updateInfo.LatestVersion)"
             Write-ManagerLog -Message "Update available: v$($script:updateInfo.LatestVersion)."
         } else {
-            $updateButton.Text = 'Up to date — check again'
+            $updateButton.Text = 'Up to date - check again'
             Write-ManagerLog -Message 'Update check: FrameGenNG is up to date.'
             if ($script:updateCheckWasManual) {
                 [System.Windows.Forms.MessageBox]::Show('You already have the latest compatible FrameGenNG release.', 'FrameGenNG is up to date', 'OK', 'Information') | Out-Null
@@ -496,6 +510,7 @@ function Refresh-ManagerStatus {
         $gamePathText.Text = "BeamNG installation: $($script:resolvedGameRoot)"
         $status = Get-FrameGenNGStatus -GameRoot $script:resolvedGameRoot -LauncherIni $LauncherIni
         $statusText.Text = Format-StatusText -Status $status
+        Update-MainLayout
         if (-not [bool]$status.installed) {
             $statusDot.ForeColor = $colors.Muted
             $installButton.Enabled = $true
@@ -515,6 +530,7 @@ function Refresh-ManagerStatus {
         return $status
     } catch {
         $statusText.Text = "Invalid configuration`r`n$($_.Exception.Message)"
+        Update-MainLayout
         $statusDot.ForeColor = $colors.Danger
         $gamePathBox.Text = if ($null -ne $GameRoot) { $GameRoot } else { 'Package is not in the BeamNG root folder' }
         $userPathBox.Text = 'Unavailable'
