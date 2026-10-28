@@ -1,43 +1,44 @@
-# Notices des composants tiers
+# Third-party notices
 
-FrameGenNG assemble plusieurs projets indépendants. Leur présence n'implique aucune affiliation ni approbation de FrameGenNG.
+FrameGenNG combines several independent projects. Their presence does not imply affiliation with or endorsement of FrameGenNG.
 
 ## OptiScaler
 
-- Projet : <https://github.com/optiscaler/OptiScaler>
-- Commit de base : `b19cfd29134ab9bc75d654b90f55fb05faca91b2`
-- Licence : GNU GPL version 3
-- Modifications FrameGenNG : `source/optiscaler/framegenng-optiscaler.patch`
+- Project: <https://github.com/optiscaler/OptiScaler>
+- Upstream base commit: `b19cfd29134ab9bc75d654b90f55fb05faca91b2`
+- License: GNU GPL version 3
+- FrameGenNG changes: `source/renderer/framegenng-renderer.patch`
 
-Le texte complet de la GPLv3 est fourni dans `LICENSE`.
+The complete GPLv3 text is provided in `LICENSE`. Copyright remains with the OptiScaler authors and contributors.
 
 ## dlssg_for_sm86
 
-- Projet : <https://github.com/sdli1995/dlssg_for_sm86>
-- Version intégrée au prototype : 0.4.0
-- Code propre au projet : MIT selon sa notice amont
-- Runtime NVIDIA et images de kernels : binaires tiers, explicitement exclus de la licence MIT par le projet amont
-- Notice amont : <https://github.com/sdli1995/dlssg_for_sm86/blob/main/THIRD_PARTY_NOTICES.txt>
+- Project and author: <https://github.com/sdli1995/dlssg_for_sm86> by `sdli1995`
+- Version integrated into the prototype: 0.4.0
+- Project-owned code: MIT, according to the upstream notice
+- NVIDIA runtime and kernel images: third-party binaries explicitly excluded from the upstream MIT license
+- RTX 20/SM75 adaptation: credited upstream to `Coldwood1026`
+- Upstream notice: <https://github.com/sdli1995/dlssg_for_sm86/blob/main/THIRD_PARTY_NOTICES.txt>
 
-FrameGenNG utilise uniquement le proxy, le runtime, le backend SM75/SM86 et le pack de kernels nécessaires au profil RTX 20/30. Les composants optionnels de Super Resolution et XeSS-FG ne sont pas inclus.
+FrameGenNG uses only the proxy, runtime, SM75/SM86 backend, and kernel pack required by the RTX 20/30 profile. Optional Super Resolution and XeSS-FG components are not included.
 
-Fichiers principaux et empreintes de la version 0.4.0 validée :
+Main files and hashes from the validated 0.4.0 package:
 
-| Fichier | SHA-256 |
+| File | SHA-256 |
 | --- | --- |
 | `d3d12.dll` | `c4b6f6320a8ad465334514161911941f769d541f8e8d5186171fbe0027ea1ddc` |
 | `runtime/nvngx_dlssg.dll` | `cadee1aa6db3907babdc3285da2aebc4553d92b89c38ba3eae8abd8bba1bea72` |
 | `backend/sm86_backend.dll` | `30ffc6e09a347ccde87ecc6fa54fd7818f5ed8a9353f5c31c2a90835c7f0ca9b` |
 | `kernels/fg_kernels.dll` | `1394c2d5d9cc8938ba3e52b043048d20d6d4c13a019c161b11a3dfd16343ec24` |
 
-## NVIDIA Streamline et NGX
+## NVIDIA Streamline and NGX
 
-Les DLL Streamline et NGX restent soumises aux conditions de NVIDIA. Elles sont chargées comme composants séparés et ne sont pas relicenciées par FrameGenNG.
+Streamline and NGX DLLs remain subject to NVIDIA's terms. They are loaded as separate components and are not relicensed by FrameGenNG.
 
 - Streamline : <https://github.com/NVIDIAGameWorks/Streamline>
 - NVIDIA DLSS : <https://developer.nvidia.com/rtx/dlss>
 
-## Autres licences
+## Other licenses
 
-Les notices DirectX, FidelityFX et XeSS distribuées avec le package OptiScaler d'origine sont conservées dans `licenses/`. Certaines couvrent des composants non actifs dans la configuration FrameGenNG, mais restent présentes pour préserver le jeu de notices fourni avec le binaire amont.
+The DirectX, FidelityFX, and XeSS notices distributed with the upstream OptiScaler package are preserved in `licenses/`. Some cover components not active in the FrameGenNG configuration, but remain present to preserve the notice set supplied with the upstream binary.
 

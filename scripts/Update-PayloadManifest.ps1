@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 
 Set-StrictMode -Version Latest
@@ -19,8 +19,8 @@ $manifest = [pscustomobject][ordered]@{
     schemaVersion = 1
     packageVersion = (Get-Content -LiteralPath (Join-Path $repoRoot 'VERSION') -Raw).Trim()
     profiles = [pscustomobject][ordered]@{
-        NativeRTX = @('Bin64/dxgi.dll', 'Bin64/OptiScaler.ini', 'Bin64/OptiScaler/**', 'user-mod/**')
-        LegacyRTX = @('NativeRTX', 'Bin64/d3d12.dll', 'Bin64/dlssg_sm86.ini', 'Bin64/dlssg_sm86/**')
+        NativeRTX = @('Bin64/dxgi.dll', 'Bin64/FrameGenNG.ini', 'Bin64/FrameGenNG/**', 'user-mod/**')
+        LegacyRTX = @('NativeRTX', 'Bin64/d3d12.dll', 'Bin64/FGNGEngine.ini', 'Bin64/FGNGEngine/**')
     }
     files = @($files)
 }

@@ -1,10 +1,15 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $script:ProductName = 'FrameGenNG'
 $script:StateFileName = 'install-state.json'
 $script:SettingsEnabledKey = 'BeamNGFrameGenerationEnabled'
 $script:SettingsMultiplierKey = 'BeamNGFrameGenerationMultiplier'
+$script:RestorePointSchemaVersion = 1
+$script:AutomaticRestorePointLimit = 5
+$script:ManualRestorePointLimit = 10
+$script:TechnicalBackupLimit = 2
+$script:RecoveryArtifactLimit = 3
 
 function Get-FrameGenNGPackageRoot {
     return [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
@@ -13,14 +18,14 @@ function Get-FrameGenNGPackageRoot {
 function Get-FrameGenNGVersion {
     $versionPath = Join-Path (Get-FrameGenNGPackageRoot) 'VERSION'
     if (-not (Test-Path -LiteralPath $versionPath -PathType Leaf)) {
-        throw "Fichier VERSION introuvable : $versionPath"
+        throw "VERSION file not found: $versionPath"
     }
     return (Get-Content -LiteralPath $versionPath -Raw).Trim()
 }
 
 function Assert-BeamNGClosed {
     if ($null -ne (Get-Process -Name 'BeamNG.drive.x64' -ErrorAction SilentlyContinue)) {
-        throw 'BeamNG.drive est en cours d execution. Fermez completement le jeu avant de continuer.'
+        throw 'BeamNG.drive is running. Close the game completely before continuing.'
     }
 }
 
@@ -41,10 +46,10 @@ function Resolve-BeamNGGameRoot {
 
     if (-not (Test-BeamNGGameRoot -Path $candidate)) {
         throw @"
-FrameGenNG doit etre place directement dans le dossier racine de BeamNG.drive.
-Dossier attendu : <BeamNG.drive>\FrameGenNG
-Dossier examine : $candidate
-Executable attendu : Bin64\BeamNG.drive.x64.exe
+FrameGenNG must be placed directly in the BeamNG.drive root folder.
+Expected folder: <BeamNG.drive>\FrameGenNG
+Checked folder: $candidate
+Expected executable: Bin64\BeamNG.drive.x64.exe
 "@
     }
     return $candidate
@@ -58,7 +63,7 @@ function Resolve-BeamNGUserRoot {
         $LauncherIni = Join-Path $localAppData 'BeamNG\BeamNG.drive.ini'
     }
     if (-not (Test-Path -LiteralPath $LauncherIni -PathType Leaf)) {
-        throw "Configuration BeamNG introuvable : $LauncherIni. Lancez au moins une fois le launcher BeamNG."
+        throw "BeamNG configuration not found: $LauncherIni. Run the BeamNG launcher at least once."
     }
 
     $configured = $null
@@ -69,7 +74,7 @@ function Resolve-BeamNGUserRoot {
         }
     }
     if ([string]::IsNullOrWhiteSpace($configured)) {
-        throw "La cle userFolder est absente de $LauncherIni"
+        throw "The userFolder key is missing from $LauncherIni"
     }
 
     $base = [Environment]::ExpandEnvironmentVariables($configured)
@@ -87,7 +92,65 @@ function Resolve-BeamNGUserRoot {
     if (Test-Path -LiteralPath $currentSettings -PathType Leaf) {
         return [System.IO.Path]::GetFullPath($currentRoot).TrimEnd('\')
     }
-    throw "Dossier utilisateur BeamNG invalide. Aucun settings.json trouve sous $base ou $currentRoot"
+    throw "Invalid BeamNG user folder. No settings.json was found under $base or $currentRoot"
+}
+
+function Get-FrameGenNGGameLanguage {
+    param([Parameter(Mandatory)][string]$UserRoot)
+
+    $settingsPath = Join-Path $UserRoot 'settings\cloud\settings.json'
+    if (Test-Path -LiteralPath $settingsPath -PathType Leaf) {
+        try {
+            $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+            if ($settings.PSObject.Properties.Name -contains 'userLanguage') {
+                $language = ([string]$settings.userLanguage).Trim().ToLowerInvariant()
+                if ($language -match '^(fr|de|es)(?:[_-]|$)') { return $Matches[1] }
+            }
+        } catch {
+            # Invalid or unavailable language settings must never block installation.
+        }
+    }
+    return 'en'
+}
+
+function Get-FrameGenNGGameStrings {
+    param([Parameter(Mandatory)][string]$UserRoot)
+
+    $strings = @{
+        en = @{
+            Heading = 'Frame Generation'
+            Enabled = 'Enable Frame Generation'
+            EnabledTooltip = 'Inserts generated frames between frames rendered by the game.'
+            Multiplier = 'Multiplier'
+            MultiplierTooltip = '2× is recommended for the best balance of smoothness and stability.'
+            Recommended = '2× — Recommended'
+        }
+        fr = @{
+            Heading = "Génération d’images"
+            Enabled = "Activer la génération d’images"
+            EnabledTooltip = "Insère des images générées entre les images rendues par le jeu."
+            Multiplier = "Multiplicateur"
+            MultiplierTooltip = "2× est recommandé pour le meilleur équilibre entre fluidité et stabilité."
+            Recommended = "2× — Recommandé"
+        }
+        de = @{
+            Heading = 'Frame-Generierung'
+            Enabled = 'Frame-Generierung aktivieren'
+            EnabledTooltip = 'Fügt generierte Bilder zwischen den vom Spiel gerenderten Bildern ein.'
+            Multiplier = 'Multiplikator'
+            MultiplierTooltip = '2× wird für das beste Verhältnis aus Flüssigkeit und Stabilität empfohlen.'
+            Recommended = '2× — Empfohlen'
+        }
+        es = @{
+            Heading = 'Generación de fotogramas'
+            Enabled = 'Activar generación de fotogramas'
+            EnabledTooltip = 'Inserta fotogramas generados entre los fotogramas renderizados por el juego.'
+            Multiplier = 'Multiplicador'
+            MultiplierTooltip = 'Se recomienda 2× para obtener el mejor equilibrio entre fluidez y estabilidad.'
+            Recommended = '2× — Recomendado'
+        }
+    }
+    return $strings[(Get-FrameGenNGGameLanguage -UserRoot $UserRoot)]
 }
 
 function Get-FrameGenNGDataRoot {
@@ -100,22 +163,140 @@ function Get-FrameGenNGStatePath {
     return Join-Path (Get-FrameGenNGDataRoot -UserRoot $UserRoot) $script:StateFileName
 }
 
+. (Join-Path $PSScriptRoot 'Core\FrameGenNG.Recovery.ps1')
+
+function Get-BeamNGLauncherIniPath {
+    param([string]$LauncherIni)
+    if (-not [string]::IsNullOrWhiteSpace($LauncherIni)) {
+        return [System.IO.Path]::GetFullPath($LauncherIni)
+    }
+    $localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+    return Join-Path $localAppData 'BeamNG\BeamNG.drive.ini'
+}
+
+function Get-BeamNGIdentity {
+    param(
+        [Parameter(Mandatory)][string]$GameRoot,
+        [string]$LauncherIni
+    )
+    $executable = Join-Path $GameRoot 'Bin64\BeamNG.drive.x64.exe'
+    $version = $null
+    $launcherPath = Get-BeamNGLauncherIniPath -LauncherIni $LauncherIni
+    if (Test-Path -LiteralPath $launcherPath -PathType Leaf) {
+        foreach ($line in Get-Content -LiteralPath $launcherPath) {
+            if ($line -match '^\s*version\s*=\s*(.+?)\s*$') {
+                $version = $Matches[1].Trim().Trim('"')
+                break
+            }
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($version)) {
+        $version = [string](Get-Item -LiteralPath $executable).VersionInfo.FileVersion
+    }
+    if ([string]::IsNullOrWhiteSpace($version)) { $version = 'unknown' }
+    return [pscustomobject][ordered]@{
+        version = $version
+        executable = [System.IO.Path]::GetFullPath($executable)
+        executableSha256 = Get-FileSha256 -Path $executable
+    }
+}
+
+function Read-FrameGenNGState {
+    param(
+        [Parameter(Mandatory)][string]$UserRoot,
+        [switch]$AllowBackup
+    )
+    $primary = Get-FrameGenNGStatePath -UserRoot $UserRoot
+    $candidates = [System.Collections.Generic.List[string]]::new()
+    if (Test-Path -LiteralPath $primary -PathType Leaf) { $candidates.Add($primary) }
+    if ($AllowBackup) {
+        $backupRoot = Join-Path (Get-FrameGenNGDataRoot -UserRoot $UserRoot) 'backups'
+        if (Test-Path -LiteralPath $backupRoot -PathType Container) {
+            foreach ($file in Get-ChildItem -LiteralPath $backupRoot -Filter 'installation-state.json' -Recurse -File -Force | Sort-Object LastWriteTime -Descending) {
+                $candidates.Add($file.FullName)
+            }
+        }
+    }
+    foreach ($candidate in $candidates) {
+        try {
+            $state = Get-Content -LiteralPath $candidate -Raw | ConvertFrom-Json
+            if ([string]$state.product -eq $script:ProductName -and $state.PSObject.Properties.Name -contains 'targets') {
+                return [pscustomobject]@{ state = $state; path = $candidate; primaryPath = $primary; recovered = ($candidate -ne $primary) }
+            }
+        } catch {
+            # Continue to the redundant state copy when the primary file is damaged.
+        }
+    }
+    return $null
+}
+
+function Assert-FrameGenNGPayloadIntegrity {
+    param([Parameter(Mandatory)][string]$PackageRoot)
+    $manifestPath = Join-Path $PackageRoot 'payload\manifest.json'
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw "Payload manifest not found: $manifestPath" }
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    $packageVersion = (Get-Content -LiteralPath (Join-Path $PackageRoot 'VERSION') -Raw).Trim()
+    if ([string]$manifest.packageVersion -ne $packageVersion) {
+        throw "Payload manifest version $($manifest.packageVersion) does not match package version $packageVersion."
+    }
+    foreach ($entry in @($manifest.files)) {
+        $relative = ([string]$entry.path).Replace('/', '\')
+        $path = [System.IO.Path]::GetFullPath((Join-Path (Join-Path $PackageRoot 'payload') $relative))
+        if (-not (Test-PathUnderRoot -Path $path -Roots @((Join-Path $PackageRoot 'payload')))) { throw "Unsafe payload path: $relative" }
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Payload file is missing: $relative" }
+        if ((Get-Item -LiteralPath $path).Length -ne [long]$entry.size) { throw "Payload size mismatch: $relative" }
+        if ((Get-FileSha256 -Path $path) -ne ([string]$entry.sha256).ToLowerInvariant()) { throw "Payload checksum mismatch: $relative" }
+    }
+    return $manifest
+}
+
+function Get-BeamNGUpdateComparison {
+    param(
+        [Parameter(Mandatory)]$State,
+        [Parameter(Mandatory)][string]$GameRoot,
+        [string]$LauncherIni
+    )
+    $current = Get-BeamNGIdentity -GameRoot $GameRoot -LauncherIni $LauncherIni
+    $identityChanged = $false
+    $uiChanged = $false
+    if ($State.PSObject.Properties.Name -contains 'gameIdentity') {
+        $identityChanged = [string]$State.gameIdentity.version -ne [string]$current.version -or
+            [string]$State.gameIdentity.executableSha256 -ne [string]$current.executableSha256
+    }
+    if ($State.PSObject.Properties.Name -contains 'gameUiSources') {
+        $layout = Join-Path $GameRoot 'ui\ui-vue\src\modules\options\runtime\layout.json'
+        $conditions = Join-Path $GameRoot 'ui\ui-vue\src\modules\options\runtime\conditions.js'
+        $uiChanged = -not (Test-Path -LiteralPath $layout -PathType Leaf) -or
+            -not (Test-Path -LiteralPath $conditions -PathType Leaf) -or
+            [string]$State.gameUiSources.layoutSha256 -ne (Get-FileSha256 -Path $layout) -or
+            [string]$State.gameUiSources.conditionsSha256 -ne (Get-FileSha256 -Path $conditions)
+    }
+    return [pscustomobject][ordered]@{
+        detected = $identityChanged -or $uiChanged
+        identityChanged = $identityChanged
+        uiChanged = $uiChanged
+        installedVersion = if ($State.PSObject.Properties.Name -contains 'gameIdentity') { [string]$State.gameIdentity.version } else { $null }
+        currentVersion = [string]$current.version
+        currentIdentity = $current
+    }
+}
+
 function Get-NvidiaRtxProfile {
     param([ValidateSet('Auto', 'LegacyRTX', 'NativeRTX')][string]$Profile = 'Auto')
 
     if ($Profile -ne 'Auto') {
-        return [pscustomobject]@{ Profile = $Profile; Gpu = 'Profil force par la ligne de commande' }
+        return [pscustomobject]@{ Profile = $Profile; Gpu = 'Profile forced from the command line' }
     }
 
     $gpuNames = @()
     try {
         $gpuNames = @(Get-CimInstance Win32_VideoController -ErrorAction Stop | ForEach-Object { [string]$_.Name })
     } catch {
-        throw "Impossible de detecter le GPU. Utilisez -Profile LegacyRTX ou -Profile NativeRTX. Detail : $($_.Exception.Message)"
+        throw "Unable to detect the GPU. Use -Profile LegacyRTX or -Profile NativeRTX. Details: $($_.Exception.Message)"
     }
     $rtx = @($gpuNames | Where-Object { $_ -match '(?i)NVIDIA.*RTX' } | Select-Object -First 1)
     if ($rtx.Count -eq 0) {
-        throw "Aucun GPU NVIDIA RTX detecte. GPU trouves : $($gpuNames -join ', ')"
+        throw "No NVIDIA RTX GPU was detected. GPUs found: $($gpuNames -join ', ')"
     }
     $name = [string]$rtx[0]
     if ($name -match '(?i)RTX\s*(20|30)\d{2}') {
@@ -124,7 +305,7 @@ function Get-NvidiaRtxProfile {
     if ($name -match '(?i)RTX\s*(40|50)\d{2}') {
         return [pscustomobject]@{ Profile = 'NativeRTX'; Gpu = $name }
     }
-    throw "Generation RTX non reconnue : $name. Cette version refuse de choisir un profil non valide."
+    throw "Unknown RTX generation: $name. This version will not guess an unvalidated profile."
 }
 
 function Get-FileSha256 {
@@ -172,6 +353,19 @@ function Test-PathUnderRoot {
     return $false
 }
 
+function Clear-BeamNGShaderCache {
+    param([Parameter(Mandatory)][string]$UserRoot)
+
+    $tempRoot = [System.IO.Path]::GetFullPath((Join-Path $UserRoot 'temp')).TrimEnd('\')
+    $shaderCachePath = [System.IO.Path]::GetFullPath((Join-Path $tempRoot 'shaders')).TrimEnd('\')
+    if (-not (Test-PathUnderRoot -Path $shaderCachePath -Roots @($tempRoot))) {
+        throw "Shader cache is outside the BeamNG temporary folder: $shaderCachePath"
+    }
+    if (Test-Path -LiteralPath $shaderCachePath -PathType Container) {
+        Remove-Item -LiteralPath $shaderCachePath -Recurse -Force
+    }
+}
+
 function Write-JsonFile {
     param(
         [Parameter(Mandatory)]$Value,
@@ -192,7 +386,7 @@ function Copy-TargetWithBackup {
         [Parameter(Mandatory)][int]$Index
     )
     if (-not (Test-Path -LiteralPath $Source)) {
-        throw "Fichier du package manquant : $Source"
+        throw "Package file is missing: $Source"
     }
 
     $isDirectory = Test-Path -LiteralPath $Source -PathType Container
@@ -249,16 +443,29 @@ function Restore-TrackedTarget {
         [Parameter(Mandatory)]$Target,
         [Parameter(Mandatory)][string]$BackupRoot,
         [Parameter(Mandatory)][string[]]$AllowedRoots,
-        [string]$RecoveryRoot
+        [string]$RecoveryRoot,
+        [string]$GameRoot,
+        [bool]$GameUpdated = $false
     )
     $destination = [System.IO.Path]::GetFullPath([string]$Target.destination)
     if (-not (Test-PathUnderRoot -Path $destination -Roots $AllowedRoots)) {
-        throw "Cible de restauration hors des dossiers autorises : $destination"
+        throw "Restore target is outside the allowed folders: $destination"
     }
 
+    $isGameTarget = -not [string]::IsNullOrWhiteSpace($GameRoot) -and
+        (Test-PathUnderRoot -Path $destination -Roots @($GameRoot))
+    $restoreAfterGameUpdate = $Target.PSObject.Properties.Name -contains 'restoreAfterGameUpdate' -and
+        [bool]$Target.restoreAfterGameUpdate
     if (Test-Path -LiteralPath $destination) {
         $currentHash = Get-PathSha256 -Path $destination
         $installedHash = [string]$Target.installedSha256
+        if ($GameUpdated -and $isGameTarget -and $currentHash -ne $installedHash) {
+            if (-not [string]::IsNullOrWhiteSpace($RecoveryRoot)) {
+                New-Item -ItemType Directory -Path $RecoveryRoot -Force | Out-Null
+                Copy-Item -LiteralPath $destination -Destination (Join-Path $RecoveryRoot ([string]$Target.backupName)) -Recurse -Force
+            }
+            return
+        }
         if (-not [string]::IsNullOrWhiteSpace($RecoveryRoot) -and
             -not [string]::IsNullOrWhiteSpace($installedHash) -and $currentHash -ne $installedHash) {
             New-Item -ItemType Directory -Path $RecoveryRoot -Force | Out-Null
@@ -268,9 +475,12 @@ function Restore-TrackedTarget {
     }
 
     if ([bool]$Target.existed) {
+        if ($GameUpdated -and $isGameTarget -and -not $restoreAfterGameUpdate) {
+            throw "A pre-existing game file cannot be restored safely after a BeamNG update: $destination"
+        }
         $source = Join-Path $BackupRoot ([string]$Target.backupName)
         if (-not (Test-Path -LiteralPath $source)) {
-            throw "Sauvegarde d'origine manquante : $source"
+            throw "Original backup is missing: $source"
         }
         New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
         Copy-Item -LiteralPath $source -Destination $destination -Recurse -Force
@@ -278,18 +488,22 @@ function Restore-TrackedTarget {
 }
 
 function Get-GraphicsLayoutPatch {
-    param([Parameter(Mandatory)][string]$SourcePath)
+    param(
+        [Parameter(Mandatory)][string]$SourcePath,
+        [Parameter(Mandatory)][string]$UserRoot
+    )
     $layout = Get-Content -LiteralPath $SourcePath -Raw | ConvertFrom-Json
+    $text = Get-FrameGenNGGameStrings -UserRoot $UserRoot
     $graphics = @($layout.items | Where-Object {
         $_.PSObject.Properties.Name -contains 'categoryId' -and $_.categoryId -eq 'graphics'
     })
-    if ($graphics.Count -ne 1) { throw "Categorie graphique BeamNG introuvable ou ambigue : $($graphics.Count)" }
+    if ($graphics.Count -ne 1) { throw "BeamNG graphics category is missing or ambiguous: $($graphics.Count)" }
 
     $groups = @($graphics[0].items | Where-Object {
         $_.PSObject.Properties.Name -contains 'items' -and
         @($_.items | Where-Object { $_.PSObject.Properties.Name -contains 'setting' -and $_.setting -eq 'GraphicAntialiasType' }).Count -eq 1
     })
-    if ($groups.Count -ne 1) { throw "Groupe DLSS BeamNG introuvable ou ambigu : $($groups.Count)" }
+    if ($groups.Count -ne 1) { throw "BeamNG DLSS group is missing or ambiguous: $($groups.Count)" }
 
     $alreadyPatched = @($groups[0].items | Where-Object {
         $_.PSObject.Properties.Name -contains 'setting' -and $_.setting -eq $script:SettingsEnabledKey
@@ -298,14 +512,14 @@ function Get-GraphicsLayoutPatch {
 
     $fgItems = @(
         [pscustomobject][ordered]@{
-            version = '0.40'; label = "Génération d’images"; interactive = $false
+            version = '0.40'; label = $text.Heading; interactive = $false
             condition_always_off = $false; condition_not_shipping = $false; condition_simplemenu = ''
             condition_visible = 'GraphicDLSSSelected'; condition_enabled = ''; itemType = 'heading'
             component = 'OptionsHeading'; icon = '_empty'; variant = 'h4'; search = @('label')
         },
         [pscustomobject][ordered]@{
-            version = '0.40'; label = "Activer la génération d’images"
-            tooltip = 'Insère des images supplémentaires entre les images rendues par le jeu.'
+            version = '0.40'; label = $text.Enabled
+            tooltip = $text.EnabledTooltip
             setting = $script:SettingsEnabledKey; interactive = $true; condition_always_off = $false
             condition_not_shipping = $false; condition_simplemenu = ''; condition_visible = 'GraphicDLSSSelected'
             condition_enabled = ''; itemType = 'checkbox'; component = 'OptionsCheckbox'; separateLabel = $true
@@ -313,14 +527,14 @@ function Get-GraphicsLayoutPatch {
             search = @('label', 'caption', 'tooltip', 'setting')
         },
         [pscustomobject][ordered]@{
-            version = '0.40'; label = 'Multiplicateur'
-            tooltip = '2× est recommandé pour le meilleur équilibre entre fluidité et stabilité.'
+            version = '0.40'; label = $text.Multiplier
+            tooltip = $text.MultiplierTooltip
             setting = $script:SettingsMultiplierKey; interactive = $true; condition_always_off = $false
             condition_not_shipping = $false; condition_simplemenu = ''; condition_visible = 'GraphicDLSSSelected'
             condition_enabled = $script:SettingsEnabledKey; itemType = 'options'; component = 'BngSmartSelect'
             separateLabel = $true; manualApply = $false; manualLua = ''; optionsSource = ''
             options = @(
-                [pscustomobject][ordered]@{ value = 2; label = '2× — Recommandé' },
+                [pscustomobject][ordered]@{ value = 2; label = $text.Recommended },
                 [pscustomobject][ordered]@{ value = 3; label = '3×' },
                 [pscustomobject][ordered]@{ value = 4; label = '4×' }
             )
@@ -339,7 +553,7 @@ function Get-GraphicsLayoutPatch {
             $inserted = $true
         }
     }
-    if (-not $inserted) { throw 'Point d insertion des controles FrameGenNG introuvable apres les reglages DLSS.' }
+    if (-not $inserted) { throw 'Unable to find the FrameGenNG control insertion point after the DLSS settings.' }
     $groups[0].items = $newItems.ToArray()
     return $layout
 }
@@ -349,7 +563,7 @@ function Get-ConditionsPatch {
     $conditions = Get-Content -LiteralPath $SourcePath -Raw
     if ($conditions -match '\bGraphicDLSSSelected\s*\(') { return $conditions }
     $anchor = '(?ms)(    GraphicAntialiasEnabled\(values\) \{\r?\n      return values\.GraphicAntialiasType !== "off"\r?\n    \},)'
-    if ($conditions -notmatch $anchor) { throw 'Point d insertion de la condition DLSS introuvable.' }
+    if ($conditions -notmatch $anchor) { throw 'Unable to find the DLSS condition insertion point.' }
     $addition = @'
 $1
     GraphicDLSSSelected(values) {
@@ -357,6 +571,41 @@ $1
     },
 '@
     return [regex]::Replace($conditions, $anchor, $addition, 1)
+}
+
+function Get-HdrEncoderPatch {
+    param([Parameter(Mandatory)][string]$SourcePath)
+
+    $source = [System.IO.File]::ReadAllText($SourcePath)
+    $originalScRgbConstant = 'static const uint OutputMode_scRGB = 1;'
+    $originalHdr10Constant = 'static const uint OutputMode_HDR10 = 2;'
+    $hdr10Comparison = 'outputMode == OutputMode_HDR10'
+
+    if ($source.Contains('FrameGenNGIsHdr10Output')) {
+        throw "The BeamNG HDR encoder already contains a FrameGenNG bridge: $SourcePath"
+    }
+    if (-not $source.Contains($originalScRgbConstant) -or
+        -not $source.Contains($originalHdr10Constant) -or
+        -not $source.Contains($hdr10Comparison)) {
+        throw "Unsupported BeamNG HDR encoder version: $SourcePath"
+    }
+
+    $bridge = @'
+static const uint OutputMode_scRGB = 0xFFFFFFFEu;
+static const uint OutputMode_HDR10 = 1;
+static const uint OutputMode_HDR10Native = 2;
+
+// FrameGenNG keeps BeamNG mode 1 aligned with its HDR10 swapchain bridge.
+bool FrameGenNGIsHdr10Output(uint outputMode)
+{
+   return outputMode == OutputMode_HDR10 || outputMode == OutputMode_HDR10Native;
+}
+'@
+
+    $patched = $source.Replace($hdr10Comparison, 'FrameGenNGIsHdr10Output(outputMode)')
+    $patched = $patched.Replace($originalScRgbConstant, $bridge)
+    $patched = $patched.Replace($originalHdr10Constant, '')
+    return $patched
 }
 
 function Get-OriginalSettingState {
@@ -379,64 +628,109 @@ function Restore-SettingState {
     }
 }
 
+function New-FrameGenNGInstallationPlan {
+    param(
+        [Parameter(Mandatory)][string]$PackageRoot,
+        [Parameter(Mandatory)][string]$GameRoot,
+        [Parameter(Mandatory)][string]$UserRoot,
+        [Parameter(Mandatory)][ValidateSet('LegacyRTX', 'NativeRTX')][string]$Profile
+    )
+
+    $payloadBin = Join-Path $PackageRoot 'payload\Bin64'
+    $gameBin = Join-Path $GameRoot 'Bin64'
+    $nativeItems = @(
+        [pscustomobject]@{ Source = Join-Path $payloadBin 'dxgi.dll'; Destination = Join-Path $gameBin 'dxgi.dll' },
+        [pscustomobject]@{ Source = Join-Path $payloadBin 'FrameGenNG.ini'; Destination = Join-Path $gameBin 'FrameGenNG.ini' },
+        [pscustomobject]@{ Source = Join-Path $payloadBin 'FrameGenNG'; Destination = Join-Path $gameBin 'FrameGenNG' }
+    )
+    if ($Profile -eq 'LegacyRTX') {
+        $nativeItems += @(
+            [pscustomobject]@{ Source = Join-Path $payloadBin 'd3d12.dll'; Destination = Join-Path $gameBin 'd3d12.dll' },
+            [pscustomobject]@{ Source = Join-Path $payloadBin 'FGNGEngine.ini'; Destination = Join-Path $gameBin 'FGNGEngine.ini' },
+            [pscustomobject]@{ Source = Join-Path $payloadBin 'FGNGEngine'; Destination = Join-Path $gameBin 'FGNGEngine' }
+        )
+    }
+
+    $lifecycleRoot = Join-Path $UserRoot 'mods\unpacked\FrameGenNG'
+    $lifecycleItems = @(
+        [pscustomobject]@{
+            Source = Join-Path $PackageRoot 'payload\user-mod\scripts\frameGenNG\modScript.lua'
+            Destination = Join-Path $lifecycleRoot 'scripts\frameGenNG\modScript.lua'
+        },
+        [pscustomobject]@{
+            Source = Join-Path $PackageRoot 'payload\user-mod\lua\ge\extensions\frameGenNGLifecycle.lua'
+            Destination = Join-Path $lifecycleRoot 'lua\ge\extensions\frameGenNGLifecycle.lua'
+        }
+    )
+
+    return [pscustomobject][ordered]@{
+        NativeItems = $nativeItems
+        LifecycleItems = $lifecycleItems
+        LayoutSource = Join-Path $GameRoot 'ui\ui-vue\src\modules\options\runtime\layout.json'
+        ConditionsSource = Join-Path $GameRoot 'ui\ui-vue\src\modules\options\runtime\conditions.js'
+        LayoutTarget = Join-Path $UserRoot 'ui\ui-vue\src\modules\options\runtime\layout.json'
+        ConditionsTarget = Join-Path $UserRoot 'ui\ui-vue\src\modules\options\runtime\conditions.js'
+        HdrEncoderTarget = Join-Path $GameRoot 'shaders\common\postFx\hdr\hdrEncode.h.hlsl'
+        SettingsPath = Join-Path $UserRoot 'settings\settings.json'
+    }
+}
+
+function Assert-FrameGenNGInstallationPlan {
+    param([Parameter(Mandatory)]$Plan)
+
+    foreach ($nativeItem in @($Plan.NativeItems)) {
+        if (Test-Path -LiteralPath $nativeItem.Destination) {
+            throw "A conflicting third-party file already exists: $($nativeItem.Destination). Remove the other graphics mod or restore BeamNG before installing FrameGenNG."
+        }
+    }
+
+    $requiredPaths = @($Plan.LayoutSource, $Plan.ConditionsSource, $Plan.HdrEncoderTarget, $Plan.SettingsPath) +
+        @($Plan.NativeItems.Source) + @($Plan.LifecycleItems.Source)
+    foreach ($requiredPath in $requiredPaths) {
+        if (-not (Test-Path -LiteralPath $requiredPath)) { throw "Required file not found: $requiredPath" }
+    }
+}
+
 function Install-FrameGenNG {
     [CmdletBinding()]
     param(
         [string]$GameRoot,
         [string]$LauncherIni,
-        [ValidateSet('Auto', 'LegacyRTX', 'NativeRTX')][string]$Profile = 'Auto'
+        [ValidateSet('Auto', 'LegacyRTX', 'NativeRTX')][string]$Profile = 'Auto',
+        [switch]$SkipRestorePoint
     )
 
     Assert-BeamNGClosed
     $packageRoot = Get-FrameGenNGPackageRoot
     $gameRootResolved = Resolve-BeamNGGameRoot -GameRoot $GameRoot
     $userRoot = Resolve-BeamNGUserRoot -LauncherIni $LauncherIni
+    $payloadManifest = Assert-FrameGenNGPayloadIntegrity -PackageRoot $packageRoot
+    $gameIdentity = Get-BeamNGIdentity -GameRoot $gameRootResolved -LauncherIni $LauncherIni
     $statePath = Get-FrameGenNGStatePath -UserRoot $userRoot
-    if (Test-Path -LiteralPath $statePath -PathType Leaf) {
-        throw 'FrameGenNG est deja installe. Utilisez Reparer ou Desinstaller.'
+    if ($null -ne (Read-FrameGenNGState -UserRoot $userRoot -AllowBackup)) {
+        throw 'FrameGenNG is already installed. Use Repair or Uninstall.'
     }
 
     $gpu = Get-NvidiaRtxProfile -Profile $Profile
-    $payloadBin = Join-Path $packageRoot 'payload\Bin64'
-    $gameBin = Join-Path $gameRootResolved 'Bin64'
+    $installationPlan = New-FrameGenNGInstallationPlan -PackageRoot $packageRoot -GameRoot $gameRootResolved -UserRoot $userRoot -Profile $gpu.Profile
+    Assert-FrameGenNGInstallationPlan -Plan $installationPlan
     $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $dataRoot = Get-FrameGenNGDataRoot -UserRoot $userRoot
     $backupRoot = Join-Path $dataRoot "backups\$timestamp"
+    $redundantStatePath = Join-Path $backupRoot 'installation-state.json'
+
+    $nativeItems = @($installationPlan.NativeItems)
+    $lifecycleTargets = @($installationPlan.LifecycleItems)
+    $layoutSource = [string]$installationPlan.LayoutSource
+    $conditionsSource = [string]$installationPlan.ConditionsSource
+    $layoutTarget = [string]$installationPlan.LayoutTarget
+    $conditionsTarget = [string]$installationPlan.ConditionsTarget
+    $hdrEncoderTarget = [string]$installationPlan.HdrEncoderTarget
+    $settingsPath = [string]$installationPlan.SettingsPath
+    if (-not $SkipRestorePoint) {
+        New-FrameGenNGRestorePoint -UserRoot $userRoot -Reason 'before-install' -GameRoot $gameRootResolved -LauncherIni $LauncherIni | Out-Null
+    }
     New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
-
-    $nativeItems = @(
-        [pscustomobject]@{ Source = Join-Path $payloadBin 'dxgi.dll'; Destination = Join-Path $gameBin 'dxgi.dll' },
-        [pscustomobject]@{ Source = Join-Path $payloadBin 'OptiScaler.ini'; Destination = Join-Path $gameBin 'OptiScaler.ini' },
-        [pscustomobject]@{ Source = Join-Path $payloadBin 'OptiScaler'; Destination = Join-Path $gameBin 'OptiScaler' }
-    )
-    if ($gpu.Profile -eq 'LegacyRTX') {
-        $nativeItems += @(
-            [pscustomobject]@{ Source = Join-Path $payloadBin 'd3d12.dll'; Destination = Join-Path $gameBin 'd3d12.dll' },
-            [pscustomobject]@{ Source = Join-Path $payloadBin 'dlssg_sm86.ini'; Destination = Join-Path $gameBin 'dlssg_sm86.ini' },
-            [pscustomobject]@{ Source = Join-Path $payloadBin 'dlssg_sm86'; Destination = Join-Path $gameBin 'dlssg_sm86' }
-        )
-    }
-
-    $layoutSource = Join-Path $gameRootResolved 'ui\ui-vue\src\modules\options\runtime\layout.json'
-    $conditionsSource = Join-Path $gameRootResolved 'ui\ui-vue\src\modules\options\runtime\conditions.js'
-    $layoutTarget = Join-Path $userRoot 'ui\ui-vue\src\modules\options\runtime\layout.json'
-    $conditionsTarget = Join-Path $userRoot 'ui\ui-vue\src\modules\options\runtime\conditions.js'
-    $settingsPath = Join-Path $userRoot 'settings\settings.json'
-    $lifecycleRoot = Join-Path $userRoot 'mods\unpacked\FrameGenNG'
-    $lifecycleTargets = @(
-        [pscustomobject]@{
-            Source = Join-Path $packageRoot 'payload\user-mod\scripts\frameGenNG\modScript.lua'
-            Destination = Join-Path $lifecycleRoot 'scripts\frameGenNG\modScript.lua'
-        },
-        [pscustomobject]@{
-            Source = Join-Path $packageRoot 'payload\user-mod\lua\ge\extensions\frameGenNGLifecycle.lua'
-            Destination = Join-Path $lifecycleRoot 'lua\ge\extensions\frameGenNGLifecycle.lua'
-        }
-    )
-
-    foreach ($required in @($layoutSource, $conditionsSource, $settingsPath) + @($nativeItems.Source) + @($lifecycleTargets.Source)) {
-        if (-not (Test-Path -LiteralPath $required)) { throw "Fichier requis introuvable : $required" }
-    }
 
     $targets = [System.Collections.Generic.List[object]]::new()
     $settingsState = $null
@@ -447,16 +741,25 @@ function Install-FrameGenNG {
             $index++
         }
 
+        $hdrEncoderRecord = Backup-WritableTarget -Destination $hdrEncoderTarget -BackupRoot $backupRoot -Index $index
+        $hdrEncoderRecord | Add-Member -NotePropertyName restoreAfterGameUpdate -NotePropertyValue $true
+        $targets.Add($hdrEncoderRecord); $index++
+        $patchedHdrEncoder = Get-HdrEncoderPatch -SourcePath $hdrEncoderTarget
+        [System.IO.File]::WriteAllText($hdrEncoderTarget, $patchedHdrEncoder, [System.Text.UTF8Encoding]::new($false))
+        $hdrEncoderRecord.installedSha256 = Get-PathSha256 -Path $hdrEncoderTarget
+
         $layoutRecord = Backup-WritableTarget -Destination $layoutTarget -BackupRoot $backupRoot -Index $index
         $targets.Add($layoutRecord); $index++
-        $patchedLayout = Get-GraphicsLayoutPatch -SourcePath $layoutSource
+        $layoutBase = if (Test-Path -LiteralPath $layoutTarget -PathType Leaf) { $layoutTarget } else { $layoutSource }
+        $patchedLayout = Get-GraphicsLayoutPatch -SourcePath $layoutBase -UserRoot $userRoot
         Write-JsonFile -Value $patchedLayout -Path $layoutTarget -Depth 100
         $layoutRecord.installedSha256 = Get-PathSha256 -Path $layoutTarget
 
         $conditionsRecord = Backup-WritableTarget -Destination $conditionsTarget -BackupRoot $backupRoot -Index $index
         $targets.Add($conditionsRecord); $index++
         New-Item -ItemType Directory -Path (Split-Path -Parent $conditionsTarget) -Force | Out-Null
-        [System.IO.File]::WriteAllText($conditionsTarget, (Get-ConditionsPatch -SourcePath $conditionsSource), [System.Text.UTF8Encoding]::new($false))
+        $conditionsBase = if (Test-Path -LiteralPath $conditionsTarget -PathType Leaf) { $conditionsTarget } else { $conditionsSource }
+        [System.IO.File]::WriteAllText($conditionsTarget, (Get-ConditionsPatch -SourcePath $conditionsBase), [System.Text.UTF8Encoding]::new($false))
         $conditionsRecord.installedSha256 = Get-PathSha256 -Path $conditionsTarget
 
         foreach ($item in $lifecycleTargets) {
@@ -472,9 +775,10 @@ function Install-FrameGenNG {
         $settings | Add-Member -NotePropertyName $script:SettingsEnabledKey -NotePropertyValue $true -Force
         $settings | Add-Member -NotePropertyName $script:SettingsMultiplierKey -NotePropertyValue 2 -Force
         Write-JsonFile -Value $settings -Path $settingsPath -Depth 100
+        Clear-BeamNGShaderCache -UserRoot $userRoot
 
         $state = [pscustomobject][ordered]@{
-            schemaVersion = 1
+            schemaVersion = 3
             product = $script:ProductName
             version = Get-FrameGenNGVersion
             installedAt = (Get-Date).ToString('o')
@@ -482,12 +786,20 @@ function Install-FrameGenNG {
             userRoot = $userRoot
             gpu = [string]$gpu.Gpu
             profile = [string]$gpu.Profile
+            gameIdentity = $gameIdentity
+            gameUiSources = [pscustomobject][ordered]@{
+                layoutSha256 = Get-FileSha256 -Path $layoutSource
+                conditionsSha256 = Get-FileSha256 -Path $conditionsSource
+            }
+            payloadManifestSha256 = Get-FileSha256 -Path (Join-Path $packageRoot 'payload\manifest.json')
             backupRoot = $backupRoot
             targets = $targets.ToArray()
             settingsPath = $settingsPath
             settings = $settingsState
         }
+        Write-JsonFile -Value $state -Path $redundantStatePath -Depth 30
         Write-JsonFile -Value $state -Path $statePath -Depth 30
+        Invoke-FrameGenNGTechnicalBackupRetention -UserRoot $userRoot -ActiveBackupRoot $backupRoot
         return $state
     } catch {
         $installError = $_.Exception.Message
@@ -505,58 +817,71 @@ function Install-FrameGenNG {
             }
         } catch { $rollbackError = $_.Exception.Message }
         if ($null -ne $rollbackError) {
-            throw "Installation interrompue : $installError. La restauration a aussi rencontre une erreur : $rollbackError"
+            throw "Installation stopped: $installError. Rollback also failed: $rollbackError"
         }
+        if (Test-Path -LiteralPath $redundantStatePath -PathType Leaf) { Remove-Item -LiteralPath $redundantStatePath -Force }
         throw $installError
     }
 }
 
 function Uninstall-FrameGenNG {
     [CmdletBinding()]
-    param([string]$GameRoot, [string]$LauncherIni)
+    param([string]$GameRoot, [string]$LauncherIni, [switch]$SkipRestorePoint)
 
     Assert-BeamNGClosed
     $gameRootResolved = Resolve-BeamNGGameRoot -GameRoot $GameRoot
     $userRoot = Resolve-BeamNGUserRoot -LauncherIni $LauncherIni
     $statePath = Get-FrameGenNGStatePath -UserRoot $userRoot
-    if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
-        throw 'Aucune installation FrameGenNG enregistree.'
+    $stateRecord = Read-FrameGenNGState -UserRoot $userRoot -AllowBackup
+    if ($null -eq $stateRecord) {
+        throw 'No FrameGenNG installation state was found.'
     }
-    $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
-    if ([string]$state.product -ne $script:ProductName) { throw 'Le fichier d etat ne correspond pas a FrameGenNG.' }
+    $state = $stateRecord.state
+    if ([string]$state.product -ne $script:ProductName) { throw 'The installation state does not belong to FrameGenNG.' }
     if ([System.IO.Path]::GetFullPath([string]$state.gameRoot).TrimEnd('\') -ne $gameRootResolved) {
-        throw "L installation enregistree appartient a un autre dossier BeamNG : $($state.gameRoot)"
+        throw "The recorded installation belongs to a different BeamNG folder: $($state.gameRoot)"
     }
     if ([System.IO.Path]::GetFullPath([string]$state.userRoot).TrimEnd('\') -ne $userRoot) {
-        throw "Le dossier utilisateur enregistre a change : $($state.userRoot)"
+        throw "The recorded BeamNG user folder has changed: $($state.userRoot)"
+    }
+    $gameUpdate = Get-BeamNGUpdateComparison -State $state -GameRoot $gameRootResolved -LauncherIni $LauncherIni
+
+    if (-not $SkipRestorePoint) {
+        New-FrameGenNGRestorePoint -UserRoot $userRoot -Reason 'before-uninstall' -GameRoot $gameRootResolved -LauncherIni $LauncherIni | Out-Null
     }
 
     $recoveryRoot = Join-Path (Get-FrameGenNGDataRoot -UserRoot $userRoot) ("recovery-before-uninstall-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
     $reverseTargets = @($state.targets)
     [array]::Reverse($reverseTargets)
     foreach ($target in $reverseTargets) {
-        Restore-TrackedTarget -Target $target -BackupRoot ([string]$state.backupRoot) -AllowedRoots @($gameRootResolved, $userRoot) -RecoveryRoot $recoveryRoot
+        Restore-TrackedTarget -Target $target -BackupRoot ([string]$state.backupRoot) -AllowedRoots @($gameRootResolved, $userRoot) -RecoveryRoot $recoveryRoot -GameRoot $gameRootResolved -GameUpdated ([bool]$gameUpdate.detected)
     }
 
     $settingsPath = [string]$state.settingsPath
     if (-not (Test-PathUnderRoot -Path $settingsPath -Roots @($userRoot))) {
-        throw "Fichier de reglages hors du dossier utilisateur autorise : $settingsPath"
+        throw "Settings file is outside the allowed BeamNG user folder: $settingsPath"
     }
     if (Test-Path -LiteralPath $settingsPath -PathType Leaf) {
         $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
         foreach ($entry in @($state.settings)) { Restore-SettingState -Settings $settings -State $entry }
         Write-JsonFile -Value $settings -Path $settingsPath -Depth 100
     }
+    Clear-BeamNGShaderCache -UserRoot $userRoot
 
     $archiveState = Join-Path (Split-Path -Parent $statePath) ("uninstalled-state-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.json')
-    Copy-Item -LiteralPath $statePath -Destination $archiveState -Force
-    Remove-Item -LiteralPath $statePath -Force
+    Copy-Item -LiteralPath ([string]$stateRecord.path) -Destination $archiveState -Force
+    if (Test-Path -LiteralPath $statePath -PathType Leaf) { Remove-Item -LiteralPath $statePath -Force }
+    $redundantStatePath = Join-Path ([string]$state.backupRoot) 'installation-state.json'
+    if (Test-Path -LiteralPath $redundantStatePath -PathType Leaf) { Remove-Item -LiteralPath $redundantStatePath -Force }
+    Invoke-FrameGenNGTechnicalBackupRetention -UserRoot $userRoot
     return [pscustomobject][ordered]@{
         restored = $true
         profile = [string]$state.profile
         backupKept = [string]$state.backupRoot
         recoveryCreated = if (Test-Path -LiteralPath $recoveryRoot) { $recoveryRoot } else { $null }
         archivedState = $archiveState
+        gameUpdateDetected = [bool]$gameUpdate.detected
+        stateRecoveredFromBackup = [bool]$stateRecord.recovered
     }
 }
 
@@ -566,14 +891,24 @@ function Repair-FrameGenNG {
 
     $gameRootResolved = Resolve-BeamNGGameRoot -GameRoot $GameRoot
     $userRoot = Resolve-BeamNGUserRoot -LauncherIni $LauncherIni
-    $statePath = Get-FrameGenNGStatePath -UserRoot $userRoot
-    if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
-        throw 'FrameGenNG n est pas installe. Utilisez Installer.'
+    $stateRecord = Read-FrameGenNGState -UserRoot $userRoot -AllowBackup
+    if ($null -eq $stateRecord) {
+        throw 'FrameGenNG is not installed. Use Install.'
     }
-    $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+    $state = $stateRecord.state
     $profile = [string]$state.profile
-    Uninstall-FrameGenNG -GameRoot $gameRootResolved -LauncherIni $LauncherIni | Out-Null
-    return Install-FrameGenNG -GameRoot $gameRootResolved -LauncherIni $LauncherIni -Profile $profile
+    $settingsPath = [string]$state.settingsPath
+    $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+    $enabled = if ($settings.PSObject.Properties.Name -contains $script:SettingsEnabledKey) { [bool]$settings.($script:SettingsEnabledKey) } else { $true }
+    $multiplier = if ($settings.PSObject.Properties.Name -contains $script:SettingsMultiplierKey) { [int]$settings.($script:SettingsMultiplierKey) } else { 2 }
+    New-FrameGenNGRestorePoint -UserRoot $userRoot -Reason 'before-repair' -GameRoot $gameRootResolved -LauncherIni $LauncherIni | Out-Null
+    Uninstall-FrameGenNG -GameRoot $gameRootResolved -LauncherIni $LauncherIni -SkipRestorePoint | Out-Null
+    $installationState = Install-FrameGenNG -GameRoot $gameRootResolved -LauncherIni $LauncherIni -Profile $profile -SkipRestorePoint
+    $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+    $settings | Add-Member -NotePropertyName $script:SettingsEnabledKey -NotePropertyValue $enabled -Force
+    $settings | Add-Member -NotePropertyName $script:SettingsMultiplierKey -NotePropertyValue $multiplier -Force
+    Write-JsonFile -Value $settings -Path $settingsPath -Depth 100
+    return $installationState
 }
 
 function Get-FrameGenNGStatus {
@@ -583,17 +918,19 @@ function Get-FrameGenNGStatus {
     $gameRootResolved = Resolve-BeamNGGameRoot -GameRoot $GameRoot
     $userRoot = Resolve-BeamNGUserRoot -LauncherIni $LauncherIni
     $statePath = Get-FrameGenNGStatePath -UserRoot $userRoot
-    if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
+    $stateRecord = Read-FrameGenNGState -UserRoot $userRoot -AllowBackup
+    if ($null -eq $stateRecord) {
         return [pscustomobject][ordered]@{
             installed = $false
             version = Get-FrameGenNGVersion
             gameRoot = $gameRootResolved
             userRoot = $userRoot
-            message = 'FrameGenNG n est pas installe.'
+            message = 'FrameGenNG is not installed.'
         }
     }
 
-    $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+    $state = $stateRecord.state
+    $gameUpdate = Get-BeamNGUpdateComparison -State $state -GameRoot $gameRootResolved -LauncherIni $LauncherIni
     $checks = foreach ($target in @($state.targets)) {
         $destination = [string]$target.destination
         $exists = Test-Path -LiteralPath $destination
@@ -606,7 +943,7 @@ function Get-FrameGenNGStatus {
             installedSha256 = [string]$target.installedSha256
         }
     }
-    $healthy = @($checks | Where-Object { -not $_.matchesInstalled }).Count -eq 0
+    $healthy = @($checks | Where-Object { -not $_.matchesInstalled }).Count -eq 0 -and -not [bool]$gameUpdate.detected
     return [pscustomobject][ordered]@{
         installed = $true
         healthy = $healthy
@@ -617,6 +954,11 @@ function Get-FrameGenNGStatus {
         userRoot = $userRoot
         checks = @($checks)
         statePath = $statePath
+        stateRecoveredFromBackup = [bool]$stateRecord.recovered
+        gameUpdateDetected = [bool]$gameUpdate.detected
+        installedGameVersion = [string]$gameUpdate.installedVersion
+        currentGameVersion = [string]$gameUpdate.currentVersion
+        actionRequired = if ([bool]$gameUpdate.detected) { 'Repair FrameGenNG to rebuild the integration for the updated BeamNG version.' } elseif ([bool]$stateRecord.recovered) { 'Repair FrameGenNG to recreate the primary installation state.' } else { $null }
     }
 }
 
@@ -628,6 +970,9 @@ Export-ModuleMember -Function @(
     'Resolve-BeamNGGameRoot',
     'Resolve-BeamNGUserRoot',
     'Get-NvidiaRtxProfile',
-    'Get-FrameGenNGVersion'
+    'Get-FrameGenNGVersion',
+    'Get-FrameGenNGRestorePoints',
+    'New-FrameGenNGRestorePoint',
+    'Remove-FrameGenNGRestorePoint'
 )
 

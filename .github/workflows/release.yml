@@ -1,0 +1,46 @@
+name: Publish FrameGenNG release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tag and package version
+        shell: pwsh
+        run: |
+          $version = (Get-Content -LiteralPath ./VERSION -Raw).Trim()
+          $expectedTag = "v$version"
+          if ($env:GITHUB_REF_NAME -ne $expectedTag) {
+            throw "Tag $env:GITHUB_REF_NAME does not match VERSION ($expectedTag)."
+          }
+
+      - name: Build release package
+        shell: pwsh
+        run: |
+          ./scripts/build-release.ps1
+          git diff --exit-code -- payload/manifest.json
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content -LiteralPath ./VERSION -Raw).Trim()
+          $arguments = @(
+            'release', 'create', $env:GITHUB_REF_NAME,
+            "dist/FrameGenNG-v$version.zip",
+            "dist/FrameGenNG-v$version.zip.sha256",
+            '--title', "FrameGenNG v$version",
+            '--generate-notes',
+            '--verify-tag'
+          )
+          & gh @arguments

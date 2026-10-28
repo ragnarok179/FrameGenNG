@@ -1,7 +1,7 @@
-diff --git a/OptiScaler/OptiScaler.vcxproj b/OptiScaler/OptiScaler.vcxproj
+diff --git a/FrameGenNGEngine/FrameGenNGEngine.vcxproj b/FrameGenNGEngine/FrameGenNGEngine.vcxproj
 index d171868..1525936 100644
---- a/OptiScaler/OptiScaler.vcxproj
-+++ b/OptiScaler/OptiScaler.vcxproj
+--- a/FrameGenNGEngine/FrameGenNGEngine.vcxproj
++++ b/FrameGenNGEngine/FrameGenNGEngine.vcxproj
 @@ -109,12 +109,13 @@
    <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
      <ClCompile>
@@ -24,10 +24,10 @@ index d171868..1525936 100644
 -</Project>
 \ No newline at end of file
 +</Project>
-diff --git a/OptiScaler/dllmain.cpp b/OptiScaler/dllmain.cpp
+diff --git a/FrameGenNGEngine/dllmain.cpp b/FrameGenNGEngine/dllmain.cpp
 index c738e4e..95fa828 100644
---- a/OptiScaler/dllmain.cpp
-+++ b/OptiScaler/dllmain.cpp
+--- a/FrameGenNGEngine/dllmain.cpp
++++ b/FrameGenNGEngine/dllmain.cpp
 @@ -1939,21 +1939,22 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
          // unhookAdvapi32();
          // DetachHooks();
@@ -58,15 +58,15 @@ index c738e4e..95fa828 100644
 -        for (const PVOID& v : State::Instance().modulesToFree)
 -        {
 -            NtdllProxy::FreeLibrary_Ldr(v);
-+            for (const PVOID& v : State::Instance().modulesToFree)
-+                NtdllProxy::FreeLibrary_Ldr(v);
++            for (const PVOID& moduleHandle : State::Instance().modulesToFree)
++                NtdllProxy::FreeLibrary_Ldr(moduleHandle);
          }
  
          spdlog::info("");
-diff --git a/OptiScaler/framegen/dlssg/DLSSG_Dx12.cpp b/OptiScaler/framegen/dlssg/DLSSG_Dx12.cpp
+diff --git a/FrameGenNGEngine/framegen/dlssg/DLSSG_Dx12.cpp b/FrameGenNGEngine/framegen/dlssg/DLSSG_Dx12.cpp
 index 5d419c6..d248034 100644
---- a/OptiScaler/framegen/dlssg/DLSSG_Dx12.cpp
-+++ b/OptiScaler/framegen/dlssg/DLSSG_Dx12.cpp
+--- a/FrameGenNGEngine/framegen/dlssg/DLSSG_Dx12.cpp
++++ b/FrameGenNGEngine/framegen/dlssg/DLSSG_Dx12.cpp
 @@ -2,6 +2,8 @@
  
  #include "DLSSG_Dx12.h"
@@ -134,10 +134,10 @@ index 5d419c6..d248034 100644
      QueryState();
  
      _gameCommandQueue = cmdQueue;
-diff --git a/OptiScaler/hooks/D3D12_Hooks.cpp b/OptiScaler/hooks/D3D12_Hooks.cpp
+diff --git a/FrameGenNGEngine/hooks/D3D12_Hooks.cpp b/FrameGenNGEngine/hooks/D3D12_Hooks.cpp
 index 31fe0f9..af4a557 100644
---- a/OptiScaler/hooks/D3D12_Hooks.cpp
-+++ b/OptiScaler/hooks/D3D12_Hooks.cpp
+--- a/FrameGenNGEngine/hooks/D3D12_Hooks.cpp
++++ b/FrameGenNGEngine/hooks/D3D12_Hooks.cpp
 @@ -15,6 +15,7 @@
  #include <proxies/Streamline_Proxy.h>
  #include <proxies/KernelBase_Proxy.h>
@@ -146,10 +146,10 @@ index 31fe0f9..af4a557 100644
  
  #include <detours/detours.h>
  
-diff --git a/OptiScaler/hooks/DxgiFactory_WrappedCalls.cpp b/OptiScaler/hooks/DxgiFactory_WrappedCalls.cpp
+diff --git a/FrameGenNGEngine/hooks/DxgiFactory_WrappedCalls.cpp b/FrameGenNGEngine/hooks/DxgiFactory_WrappedCalls.cpp
 index 620960d..86c436e 100644
---- a/OptiScaler/hooks/DxgiFactory_WrappedCalls.cpp
-+++ b/OptiScaler/hooks/DxgiFactory_WrappedCalls.cpp
+--- a/FrameGenNGEngine/hooks/DxgiFactory_WrappedCalls.cpp
++++ b/FrameGenNGEngine/hooks/DxgiFactory_WrappedCalls.cpp
 @@ -29,6 +29,66 @@ static bool ShouldCreateDx11wDx12Swapchain()
             State::Instance().activeFgInput != FGInput::NvngxFG;
  }
@@ -267,10 +267,10 @@ index 620960d..86c436e 100644
              State::Instance().swapchainInteropApi = SwapchainInteropApi::None;
  
              // check for SL proxy
-diff --git a/OptiScaler/hooks/FG_Hooks.cpp b/OptiScaler/hooks/FG_Hooks.cpp
+diff --git a/FrameGenNGEngine/hooks/FG_Hooks.cpp b/FrameGenNGEngine/hooks/FG_Hooks.cpp
 index 821cafa..152f1b3 100644
---- a/OptiScaler/hooks/FG_Hooks.cpp
-+++ b/OptiScaler/hooks/FG_Hooks.cpp
+--- a/FrameGenNGEngine/hooks/FG_Hooks.cpp
++++ b/FrameGenNGEngine/hooks/FG_Hooks.cpp
 @@ -24,6 +24,13 @@
  
  #include <d3d12.h>
@@ -606,10 +606,10 @@ index 821cafa..152f1b3 100644
      _lastPresentFlags = Flags;
  
      auto& state = State::Instance();
-diff --git a/OptiScaler/hooks/FG_Hooks.h b/OptiScaler/hooks/FG_Hooks.h
+diff --git a/FrameGenNGEngine/hooks/FG_Hooks.h b/FrameGenNGEngine/hooks/FG_Hooks.h
 index 6da5b76..9298897 100644
---- a/OptiScaler/hooks/FG_Hooks.h
-+++ b/OptiScaler/hooks/FG_Hooks.h
+--- a/FrameGenNGEngine/hooks/FG_Hooks.h
++++ b/FrameGenNGEngine/hooks/FG_Hooks.h
 @@ -24,6 +24,12 @@ class FGHooks
      static void ClearDx12InteropPresentSC(IUnknown* pSwapChain);
      static bool IsDx12InteropPresentSC(IUnknown* pSwapChain);
@@ -661,10 +661,10 @@ index 6da5b76..9298897 100644
      VALIDATE_MEMBER_HOOK(hkResizeTarget, PFN_ResizeTarget)
      VALIDATE_MEMBER_HOOK(hkGetFrameLatencyWaitableObject, PFN_GetFrameLatencyWaitableObject)
      VALIDATE_MEMBER_HOOK(hkFGRelease, PFN_Release)
-diff --git a/OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp b/OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp
+diff --git a/FrameGenNGEngine/inputs/NVNGX_DLSS_Dx12.cpp b/FrameGenNGEngine/inputs/NVNGX_DLSS_Dx12.cpp
 index 682ac48..8d9d346 100644
---- a/OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp
-+++ b/OptiScaler/inputs/NVNGX_DLSS_Dx12.cpp
+--- a/FrameGenNGEngine/inputs/NVNGX_DLSS_Dx12.cpp
++++ b/FrameGenNGEngine/inputs/NVNGX_DLSS_Dx12.cpp
 @@ -17,6 +17,7 @@
  #include <imgui/ImGuiNotify.hpp>
  
@@ -722,10 +722,10 @@ index 682ac48..8d9d346 100644
      auto handleId = InHandle->Id;
  
      // Clean up framegen
-diff --git a/OptiScaler/misc/GameConfigs.cpp b/OptiScaler/misc/GameConfigs.cpp
+diff --git a/FrameGenNGEngine/misc/GameConfigs.cpp b/FrameGenNGEngine/misc/GameConfigs.cpp
 index db54720..af73169 100644
---- a/OptiScaler/misc/GameConfigs.cpp
-+++ b/OptiScaler/misc/GameConfigs.cpp
+--- a/FrameGenNGEngine/misc/GameConfigs.cpp
++++ b/FrameGenNGEngine/misc/GameConfigs.cpp
 @@ -140,7 +140,7 @@ const std::vector<GameConfig> gameConfigs = {
      // Spoofing not required for DLSS inputs for both Dx12 and Vk
      {
@@ -735,10 +735,10 @@ index db54720..af73169 100644
      },
  
      // Red Dead Redemption 2
-diff --git a/OptiScaler/wrapped/wrapped_swapchain.cpp b/OptiScaler/wrapped/wrapped_swapchain.cpp
+diff --git a/FrameGenNGEngine/wrapped/wrapped_swapchain.cpp b/FrameGenNGEngine/wrapped/wrapped_swapchain.cpp
 index dc70036..22b9382 100644
---- a/OptiScaler/wrapped/wrapped_swapchain.cpp
-+++ b/OptiScaler/wrapped/wrapped_swapchain.cpp
+--- a/FrameGenNGEngine/wrapped/wrapped_swapchain.cpp
++++ b/FrameGenNGEngine/wrapped/wrapped_swapchain.cpp
 @@ -867,6 +867,15 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::GetDesc(DXGI_SWAP_CHAIN_DESC*
  HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers(UINT BufferCount, UINT Width, UINT Height,
                                                                  DXGI_FORMAT NewFormat, UINT SwapChainFlags)

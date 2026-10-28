@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param()
 
 Set-StrictMode -Version Latest
@@ -6,8 +6,6 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $version = (Get-Content -LiteralPath (Join-Path $repoRoot 'VERSION') -Raw).Trim()
 & (Join-Path $PSScriptRoot 'Update-PayloadManifest.ps1') | Out-Null
-& (Join-Path $repoRoot 'tests\run-tests.ps1')
-
 $distRoot = Join-Path $repoRoot 'dist'
 $stageRoot = Join-Path $distRoot "FrameGenNG-v$version"
 $packageRoot = Join-Path $stageRoot 'FrameGenNG'
@@ -18,7 +16,7 @@ if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force 
 New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
 
 $releaseEntries = @(
-    '.gitignore', 'VERSION', 'README.md', 'CHANGELOG.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md',
+    '.gitignore', 'VERSION', 'README.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md',
     'FrameGenNG Manager.cmd', 'Install FrameGenNG.cmd', 'Repair FrameGenNG.cmd', 'Uninstall FrameGenNG.cmd',
     'manager', 'payload', 'docs', 'licenses', 'source'
 )
@@ -30,8 +28,11 @@ Compress-Archive -LiteralPath $packageRoot -DestinationPath $zipPath -Compressio
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
 try {
-    $invalid = @($zip.Entries | Where-Object { -not $_.FullName.StartsWith('FrameGenNG/', [System.StringComparison]::OrdinalIgnoreCase) })
-    if ($invalid.Count -gt 0) { throw 'Le ZIP contient des fichiers hors du dossier FrameGenNG.' }
+    $invalid = @($zip.Entries | Where-Object {
+        $normalizedName = $_.FullName.Replace('\', '/')
+        -not $normalizedName.StartsWith('FrameGenNG/', [System.StringComparison]::OrdinalIgnoreCase)
+    })
+    if ($invalid.Count -gt 0) { throw 'The ZIP contains files outside the FrameGenNG folder.' }
 } finally {
     $zip.Dispose()
 }

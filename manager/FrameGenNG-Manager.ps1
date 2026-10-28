@@ -1,6 +1,6 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
-    [ValidateSet('Gui', 'Install', 'Repair', 'Uninstall', 'Status')]
+    [ValidateSet('Gui', 'Install', 'Repair', 'Uninstall', 'Status', 'CheckUpdate')]
     [string]$Action = 'Gui',
     [string]$GameRoot,
     [string]$LauncherIni,
@@ -11,36 +11,49 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'FrameGenNG.Core.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'FrameGenNG.Update.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'FrameGenNG.Diagnostics.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'FrameGenNG.Ui.psm1') -Force
 
 function Format-StatusText {
     param($Status)
     if (-not [bool]$Status.installed) {
-        return "Non installé`r`nLe jeu n'a pas encore été modifié par ce package."
+        return "Not installed`r`nThe game has not been modified by this package."
     }
     if ([bool]$Status.healthy) {
-        return "Installé et intact`r`nVersion $($Status.version) · $($Status.profile) · $($Status.gpu)"
+        return "Installed and healthy`r`nVersion $($Status.version) · $($Status.profile) · $($Status.gpu)"
+    }
+    if ([bool]$Status.gameUpdateDetected) {
+        return "BeamNG update detected`r`nRepair FrameGenNG before starting the game."
+    }
+    if ([bool]$Status.stateRecoveredFromBackup) {
+        return "Recovery state loaded`r`nRepair FrameGenNG to rebuild the primary installation state."
     }
     $broken = @($Status.checks | Where-Object { -not $_.matchesInstalled }).Count
-    return "Réparation recommandée`r`n$broken élément(s) manquant(s) ou modifié(s)."
+    return "Repair recommended`r`n$broken item(s) missing or modified."
 }
 
 function Invoke-CommandLineAction {
     switch ($Action) {
         'Install' {
-            $result = Install-FrameGenNG -GameRoot $GameRoot -LauncherIni $LauncherIni -Profile $Profile
-            Write-Host "FrameGenNG $($result.version) installe avec le profil $($result.profile)." -ForegroundColor Green
+            $installationState = Install-FrameGenNG -GameRoot $GameRoot -LauncherIni $LauncherIni -Profile $Profile
+            Write-Host "FrameGenNG $($installationState.version) installed with profile $($installationState.profile)." -ForegroundColor Green
         }
         'Repair' {
-            $result = Repair-FrameGenNG -GameRoot $GameRoot -LauncherIni $LauncherIni
-            Write-Host "FrameGenNG $($result.version) repare avec succes." -ForegroundColor Green
+            $installationState = Repair-FrameGenNG -GameRoot $GameRoot -LauncherIni $LauncherIni
+            Write-Host "FrameGenNG $($installationState.version) repaired successfully." -ForegroundColor Green
         }
         'Uninstall' {
-            $result = Uninstall-FrameGenNG -GameRoot $GameRoot -LauncherIni $LauncherIni
-            Write-Host "FrameGenNG desinstalle. Les fichiers d origine ont ete restaures." -ForegroundColor Green
-            Write-Host "Sauvegarde conservee : $($result.backupKept)"
+            $uninstallSummary = Uninstall-FrameGenNG -GameRoot $GameRoot -LauncherIni $LauncherIni
+            Write-Host 'FrameGenNG uninstalled. The original files were restored.' -ForegroundColor Green
+            Write-Host "Backup preserved: $($uninstallSummary.backupKept)"
         }
         'Status' {
             Get-FrameGenNGStatus -GameRoot $GameRoot -LauncherIni $LauncherIni | ConvertTo-Json -Depth 10
+        }
+        'CheckUpdate' {
+            $currentVersion = Get-FrameGenNGVersion
+            Get-FrameGenNGUpdateInfo -CurrentVersion $currentVersion -IncludePrerelease:$false | ConvertTo-Json -Depth 10
         }
     }
 }
@@ -50,7 +63,7 @@ if ($Action -ne 'Gui') {
         Invoke-CommandLineAction
         exit 0
     } catch {
-        Write-Host "Erreur : $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
         exit 1
     }
 }
@@ -60,147 +73,116 @@ Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
 $colors = @{
-    Window = [System.Drawing.Color]::FromArgb(30, 32, 35)
-    Panel = [System.Drawing.Color]::FromArgb(39, 42, 46)
-    Border = [System.Drawing.Color]::FromArgb(66, 70, 76)
-    Text = [System.Drawing.Color]::FromArgb(242, 243, 245)
-    Muted = [System.Drawing.Color]::FromArgb(177, 181, 187)
-    Accent = [System.Drawing.Color]::FromArgb(242, 112, 35)
-    Success = [System.Drawing.Color]::FromArgb(74, 191, 123)
-    Warning = [System.Drawing.Color]::FromArgb(242, 183, 76)
-    Danger = [System.Drawing.Color]::FromArgb(221, 85, 85)
+    Window = [System.Drawing.SystemColors]::Window
+    Panel = [System.Drawing.SystemColors]::Window
+    PanelRaised = [System.Drawing.SystemColors]::Control
+    Border = [System.Drawing.SystemColors]::ActiveBorder
+    Text = [System.Drawing.SystemColors]::WindowText
+    Muted = [System.Drawing.SystemColors]::GrayText
+    Accent = [System.Drawing.Color]::FromArgb(0, 102, 153)
+    AccentHover = [System.Drawing.Color]::FromArgb(0, 84, 126)
+    Success = [System.Drawing.Color]::FromArgb(0, 128, 0)
+    Warning = [System.Drawing.Color]::FromArgb(191, 112, 0)
+    Danger = [System.Drawing.Color]::FromArgb(192, 0, 0)
 }
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "FrameGenNG Manager"
+$form.Text = "FrameGenNG"
 $form.StartPosition = 'CenterScreen'
-$form.ClientSize = New-Object System.Drawing.Size(700, 540)
-$form.MinimumSize = New-Object System.Drawing.Size(716, 579)
+$form.ClientSize = New-Object System.Drawing.Size(470, 300)
 $form.BackColor = $colors.Window
 $form.ForeColor = $colors.Text
-$form.Font = New-Object System.Drawing.Font('Segoe UI', 9.5)
+$form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
 $form.MaximizeBox = $false
+$form.MinimizeBox = $false
+$form.ShowIcon = $false
+$form.FormBorderStyle = 'FixedDialog'
 
 $title = New-Object System.Windows.Forms.Label
 $title.Text = 'FrameGenNG'
-$title.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 22)
+$title.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 15)
 $title.ForeColor = $colors.Text
-$title.Location = New-Object System.Drawing.Point(28, 22)
+$title.Location = New-Object System.Drawing.Point(30, 24)
 $title.AutoSize = $true
 $form.Controls.Add($title)
 
-$subtitle = New-Object System.Windows.Forms.Label
-$subtitle.Text = 'Frame Generation for BeamNG.drive'
-$subtitle.Font = New-Object System.Drawing.Font('Segoe UI', 10)
-$subtitle.ForeColor = $colors.Muted
-$subtitle.Location = New-Object System.Drawing.Point(31, 63)
-$subtitle.AutoSize = $true
-$form.Controls.Add($subtitle)
-
 $versionLabel = New-Object System.Windows.Forms.Label
 $versionLabel.Text = "Version $(Get-FrameGenNGVersion)"
-$versionLabel.ForeColor = $colors.Muted
 $versionLabel.TextAlign = 'MiddleRight'
-$versionLabel.Location = New-Object System.Drawing.Point(515, 29)
-$versionLabel.Size = New-Object System.Drawing.Size(155, 24)
+$versionLabel.Location = New-Object System.Drawing.Point(320, 27)
+$versionLabel.Size = New-Object System.Drawing.Size(120, 20)
+$versionLabel.ForeColor = $colors.Muted
 $form.Controls.Add($versionLabel)
 
-$statusPanel = New-Object System.Windows.Forms.Panel
-$statusPanel.Location = New-Object System.Drawing.Point(28, 96)
-$statusPanel.Size = New-Object System.Drawing.Size(642, 88)
-$statusPanel.BackColor = $colors.Panel
-$statusPanel.BorderStyle = 'FixedSingle'
-$form.Controls.Add($statusPanel)
-
 $statusDot = New-Object System.Windows.Forms.Label
-$statusDot.Text = '●'
-$statusDot.Font = New-Object System.Drawing.Font('Segoe UI', 15)
-$statusDot.Location = New-Object System.Drawing.Point(17, 20)
-$statusDot.Size = New-Object System.Drawing.Size(26, 32)
-$statusDot.ForeColor = $colors.Muted
-$statusPanel.Controls.Add($statusDot)
+$statusDot.Visible = $false
 
 $statusText = New-Object System.Windows.Forms.Label
-$statusText.Text = 'Vérification…'
-$statusText.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 10.5)
-$statusText.Location = New-Object System.Drawing.Point(51, 18)
-$statusText.Size = New-Object System.Drawing.Size(565, 55)
+$statusText.Text = 'Checking…'
+$statusText.Location = New-Object System.Drawing.Point(31, 65)
+$statusText.Size = New-Object System.Drawing.Size(408, 38)
 $statusText.ForeColor = $colors.Text
-$statusPanel.Controls.Add($statusText)
+$form.Controls.Add($statusText)
 
-$gameLabel = New-Object System.Windows.Forms.Label
-$gameLabel.Text = 'Installation BeamNG'
-$gameLabel.ForeColor = $colors.Muted
-$gameLabel.Location = New-Object System.Drawing.Point(28, 207)
-$gameLabel.AutoSize = $true
-$form.Controls.Add($gameLabel)
-
-$gamePathBox = New-Object System.Windows.Forms.TextBox
-$gamePathBox.Location = New-Object System.Drawing.Point(28, 228)
-$gamePathBox.Size = New-Object System.Drawing.Size(642, 27)
-$gamePathBox.ReadOnly = $true
-$gamePathBox.BackColor = $colors.Panel
-$gamePathBox.ForeColor = $colors.Text
-$gamePathBox.BorderStyle = 'FixedSingle'
-$form.Controls.Add($gamePathBox)
-
-$userLabel = New-Object System.Windows.Forms.Label
-$userLabel.Text = 'Dossier utilisateur BeamNG'
-$userLabel.ForeColor = $colors.Muted
-$userLabel.Location = New-Object System.Drawing.Point(28, 271)
-$userLabel.AutoSize = $true
-$form.Controls.Add($userLabel)
-
-$userPathBox = New-Object System.Windows.Forms.TextBox
-$userPathBox.Location = New-Object System.Drawing.Point(28, 292)
-$userPathBox.Size = New-Object System.Drawing.Size(642, 27)
-$userPathBox.ReadOnly = $true
-$userPathBox.BackColor = $colors.Panel
-$userPathBox.ForeColor = $colors.Text
-$userPathBox.BorderStyle = 'FixedSingle'
-$form.Controls.Add($userPathBox)
+$gamePathText = New-Object System.Windows.Forms.Label
+$gamePathText.Visible = $false
 
 function New-ActionButton {
     param([string]$Text, [int]$X, [int]$Width, [System.Drawing.Color]$BackColor)
-    $button = New-Object System.Windows.Forms.Button
-    $button.Text = $Text
-    $button.Location = New-Object System.Drawing.Point($X, 348)
-    $button.Size = New-Object System.Drawing.Size($Width, 44)
-    $button.FlatStyle = 'Flat'
-    $button.FlatAppearance.BorderSize = 0
-    $button.BackColor = $BackColor
-    $button.ForeColor = [System.Drawing.Color]::White
-    $button.Cursor = [System.Windows.Forms.Cursors]::Hand
-    return $button
+    return New-FrameGenNGButton -Text $Text -X $X -Y 110 -Width $Width -Height 30 -Colors $colors -Style Secondary
 }
 
-$installButton = New-ActionButton -Text 'Installer' -X 28 -Width 150 -BackColor $colors.Accent
-$repairButton = New-ActionButton -Text 'Réparer' -X 190 -Width 150 -BackColor ([System.Drawing.Color]::FromArgb(69, 105, 144))
-$uninstallButton = New-ActionButton -Text 'Désinstaller' -X 352 -Width 150 -BackColor ([System.Drawing.Color]::FromArgb(112, 70, 70))
-$diagnosticButton = New-ActionButton -Text 'Diagnostic' -X 514 -Width 156 -BackColor ([System.Drawing.Color]::FromArgb(67, 70, 76))
-$form.Controls.AddRange(@($installButton, $repairButton, $uninstallButton, $diagnosticButton))
+$installButton = New-ActionButton -Text 'Install' -X 31 -Width 104 -BackColor $colors.Accent
+$repairButton = New-ActionButton -Text 'Repair' -X 143 -Width 104 -BackColor $colors.PanelRaised
+$uninstallButton = New-ActionButton -Text 'Uninstall' -X 255 -Width 104 -BackColor $colors.PanelRaised
+$form.Controls.AddRange(@($installButton, $repairButton, $uninstallButton))
+
+$updateButton = New-FrameGenNGButton -Text 'Check for updates' -X 31 -Y 152 -Width 328 -Height 30 -Colors $colors
+$form.Controls.Add($updateButton)
+
+$restorePointsButton = New-FrameGenNGButton -Text 'Restore points…' -X 31 -Y 196 -Width 130 -Height 28 -Colors $colors
+$diagnosticButton = New-FrameGenNGButton -Text 'Diagnostics…' -X 169 -Y 196 -Width 112 -Height 28 -Colors $colors
+$form.Controls.AddRange(@($restorePointsButton, $diagnosticButton))
+
+$footer = New-Object System.Windows.Forms.Panel
+$footer.Location = New-Object System.Drawing.Point(0, 244)
+$footer.Size = New-Object System.Drawing.Size(470, 56)
+$footer.BackColor = [System.Drawing.SystemColors]::Control
+$form.Controls.Add($footer)
+
+$footerLine = New-Object System.Windows.Forms.Panel
+$footerLine.Location = New-Object System.Drawing.Point(0, 0)
+$footerLine.Size = New-Object System.Drawing.Size(470, 1)
+$footerLine.BackColor = [System.Drawing.SystemColors]::ActiveBorder
+$footer.Controls.Add($footerLine)
+
+$closeButton = New-FrameGenNGButton -Text 'Close' -X 363 -Y 14 -Width 82 -Height 28 -Colors $colors -DialogResult Cancel
+$footer.Controls.Add($closeButton)
+$form.CancelButton = $closeButton
+
+$gamePathBox = New-Object System.Windows.Forms.TextBox
+$gamePathBox.Visible = $false
+$userPathBox = New-Object System.Windows.Forms.TextBox
+$userPathBox.Visible = $false
 
 $logBox = New-Object System.Windows.Forms.TextBox
-$logBox.Location = New-Object System.Drawing.Point(28, 414)
-$logBox.Size = New-Object System.Drawing.Size(642, 94)
 $logBox.Multiline = $true
 $logBox.ReadOnly = $true
-$logBox.ScrollBars = 'Vertical'
-$logBox.BackColor = [System.Drawing.Color]::FromArgb(24, 26, 29)
-$logBox.ForeColor = $colors.Muted
-$logBox.BorderStyle = 'FixedSingle'
-$logBox.Font = New-Object System.Drawing.Font('Consolas', 9)
-$logBox.Text = 'Prêt.'
-$form.Controls.Add($logBox)
+$logBox.Visible = $false
+$logBox.Text = 'Ready.'
 
 $script:resolvedGameRoot = $null
 $script:resolvedUserRoot = $null
+$script:updateInfo = $null
+$script:updateJob = $null
+$script:updateCheckWasManual = $false
 
 function Set-BusyState {
     param([bool]$Busy)
-    foreach ($button in @($installButton, $repairButton, $uninstallButton, $diagnosticButton)) {
+    foreach ($button in @($installButton, $repairButton, $uninstallButton, $diagnosticButton, $updateButton, $restorePointsButton)) {
         $button.Enabled = -not $Busy
     }
+    if (-not $Busy -and $null -ne $script:updateJob) { $updateButton.Enabled = $false }
     $form.UseWaitCursor = $Busy
     [System.Windows.Forms.Application]::DoEvents()
 }
@@ -210,7 +192,281 @@ function Write-ManagerLog {
     $logBox.AppendText("`r`n$((Get-Date).ToString('HH:mm:ss'))  $Message")
     $logBox.SelectionStart = $logBox.TextLength
     $logBox.ScrollToCaret()
+    if (-not [string]::IsNullOrWhiteSpace([string]$script:resolvedUserRoot)) {
+        Write-FrameGenNGDiagnosticLog -UserRoot $script:resolvedUserRoot -Message $Message | Out-Null
+    }
 }
+
+function Show-DiagnosticsDialog {
+    $dialog = New-FrameGenNGDialog -Title 'FrameGenNG Diagnostics' -Width 580 -Height 390 -Colors $colors
+
+    $heading = New-Object System.Windows.Forms.Label
+    $heading.Text = 'Installation diagnostics'
+    $heading.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 13)
+    $heading.Location = New-Object System.Drawing.Point(16, 14)
+    $heading.AutoSize = $true
+    $dialog.Controls.Add($heading)
+
+    $advancedCheck = New-Object System.Windows.Forms.CheckBox
+    $advancedCheck.Text = 'Enable advanced diagnostic logging'
+    $advancedCheck.Location = New-Object System.Drawing.Point(16, 46)
+    $advancedCheck.Size = New-Object System.Drawing.Size(330, 28)
+    $advancedCheck.ForeColor = $colors.Text
+    $advancedCheck.Checked = [bool](Get-FrameGenNGManagerSettings -UserRoot $script:resolvedUserRoot).advancedDiagnostics
+    $dialog.Controls.Add($advancedCheck)
+
+    $advancedInfo = New-Object System.Windows.Forms.Label
+    $advancedInfo.Text = 'When enabled, the manager keeps detailed action and error logs. It does not add per-frame game logging or affect performance while driving.'
+    $advancedInfo.Location = New-Object System.Drawing.Point(35, 73)
+    $advancedInfo.Size = New-Object System.Drawing.Size(525, 34)
+    $advancedInfo.ForeColor = $colors.Muted
+    $dialog.Controls.Add($advancedInfo)
+
+    $resultBox = New-Object System.Windows.Forms.TextBox
+    $resultBox.Location = New-Object System.Drawing.Point(16, 112)
+    $resultBox.Size = New-Object System.Drawing.Size(548, 210)
+    $resultBox.Anchor = 'Top,Bottom,Left,Right'
+    $resultBox.Multiline = $true
+    $resultBox.ReadOnly = $true
+    $resultBox.ScrollBars = 'Vertical'
+    $resultBox.BackColor = [System.Drawing.SystemColors]::Window
+    $resultBox.ForeColor = $colors.Text
+    $resultBox.BorderStyle = 'FixedSingle'
+    $resultBox.Font = New-Object System.Drawing.Font('Consolas', 9.5)
+    $dialog.Controls.Add($resultBox)
+
+    $scanButton = New-FrameGenNGButton -Text 'Run scan' -X 16 -Y 338 -Width 110 -Height 34 -Colors $colors -Anchor 'Bottom,Left'
+    $exportButton = New-FrameGenNGButton -Text 'Export diagnostic bundle' -X 240 -Y 338 -Width 180 -Height 34 -Colors $colors -Style Accent -Anchor 'Bottom,Right'
+    $closeButton = New-FrameGenNGButton -Text 'Close' -X 430 -Y 338 -Width 134 -Height 34 -Colors $colors -Anchor 'Bottom,Right' -DialogResult Cancel
+    $dialog.CancelButton = $closeButton
+    $dialog.Controls.AddRange(@($scanButton, $exportButton, $closeButton))
+
+    $runScan = {
+        try {
+            $status = Get-FrameGenNGStatus -GameRoot $script:resolvedGameRoot -LauncherIni $LauncherIni
+            $summary = Get-FrameGenNGDiagnosticSummary -Status $status
+            $lines = [System.Collections.Generic.List[string]]::new()
+            $lines.Add("Status: $($summary.health)")
+            $lines.Add("FrameGenNG: v$($summary.version)")
+            if (-not [string]::IsNullOrWhiteSpace([string]$summary.profile)) { $lines.Add("Profile: $($summary.profile)") }
+            $lines.Add("Advanced logging: $(if ($advancedCheck.Checked) { 'Enabled' } else { 'Disabled' })")
+            $lines.Add('')
+            if (@($summary.issues).Count -eq 0) {
+                $lines.Add('No issue was detected by the standard integrity checks.')
+            } else {
+                $lines.Add('Findings:')
+                foreach ($issue in @($summary.issues)) { $lines.Add("- $issue") }
+            }
+            $resultBox.Lines = $lines.ToArray()
+            Write-ManagerLog -Message "Diagnostics scan: $($summary.health)."
+        } catch {
+            $resultBox.Text = "Diagnostic scan failed.`r`n`r`n$($_.Exception.Message)"
+            Write-ManagerLog -Message "Diagnostics error: $($_.Exception.Message)"
+        }
+    }
+
+    $advancedCheck.Add_CheckedChanged({
+        try {
+            Set-FrameGenNGAdvancedDiagnostics -UserRoot $script:resolvedUserRoot -Enabled ([bool]$advancedCheck.Checked) | Out-Null
+            $state = if ($advancedCheck.Checked) { 'enabled' } else { 'disabled' }
+            Write-FrameGenNGDiagnosticLog -UserRoot $script:resolvedUserRoot -Message "Advanced diagnostic logging $state by the user." -Force | Out-Null
+            Write-ManagerLog -Message "Advanced diagnostic logging $state."
+            & $runScan
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Unable to change diagnostic mode', 'OK', 'Error') | Out-Null
+        }
+    })
+    $scanButton.Add_Click({ & $runScan })
+    $exportButton.Add_Click({
+        $answer = [System.Windows.Forms.MessageBox]::Show(
+            'The bundle can contain local folder paths, GPU information, installation state, and recent BeamNG or FrameGenNG log excerpts. Review it before sharing. Continue?',
+            'Export diagnostic bundle', 'YesNo', 'Warning')
+        if ($answer -ne 'Yes') { return }
+        try {
+            $exportButton.Enabled = $false
+            $exportButton.Text = 'Exporting…'
+            [System.Windows.Forms.Application]::DoEvents()
+            $status = Get-FrameGenNGStatus -GameRoot $script:resolvedGameRoot -LauncherIni $LauncherIni
+            $bundle = Export-FrameGenNGDiagnosticBundle -PackageRoot (Split-Path -Parent $PSScriptRoot) -GameRoot $script:resolvedGameRoot -UserRoot $script:resolvedUserRoot -Status $status
+            Write-ManagerLog -Message "Diagnostic bundle created: $($bundle.path)"
+            [System.Windows.Forms.MessageBox]::Show("Diagnostic bundle created.`r`n`r`n$($bundle.path)", 'Export complete', 'OK', 'Information') | Out-Null
+        } catch {
+            Write-ManagerLog -Message "Diagnostic export failed: $($_.Exception.Message)"
+            [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Diagnostic export failed', 'OK', 'Error') | Out-Null
+        } finally {
+            $exportButton.Enabled = $true
+            $exportButton.Text = 'Export diagnostic bundle'
+        }
+    })
+
+    & $runScan
+    [void]$dialog.ShowDialog($form)
+}
+
+function Show-RestorePointsDialog {
+    $dialog = New-FrameGenNGDialog -Title 'FrameGenNG Restore Points' -Width 620 -Height 350 -Colors $colors
+
+    $intro = New-Object System.Windows.Forms.Label
+    $intro.Text = 'Automatic points are created before install, repair, update, uninstall, and restore. The five newest automatic points are kept; manual points are kept until you delete them.'
+    $intro.Location = New-Object System.Drawing.Point(16, 12)
+    $intro.Size = New-Object System.Drawing.Size(588, 36)
+    $intro.ForeColor = $colors.Muted
+    $dialog.Controls.Add($intro)
+
+    $list = New-Object System.Windows.Forms.ListView
+    $list.Location = New-Object System.Drawing.Point(16, 54)
+    $list.Size = New-Object System.Drawing.Size(588, 225)
+    $list.Anchor = 'Top,Bottom,Left,Right'
+    $list.View = 'Details'
+    $list.FullRowSelect = $true
+    $list.MultiSelect = $false
+    $list.HideSelection = $false
+    $list.BackColor = $colors.Panel
+    $list.ForeColor = $colors.Text
+    $list.BorderStyle = 'FixedSingle'
+    [void]$list.Columns.Add('Created', 120)
+    [void]$list.Columns.Add('Restore point', 185)
+    [void]$list.Columns.Add('Version', 75)
+    [void]$list.Columns.Add('Type', 78)
+    [void]$list.Columns.Add('Size', 80)
+    $dialog.Controls.Add($list)
+
+    $createButton = New-FrameGenNGButton -Text 'Create manual point' -X 16 -Y 295 -Width 150 -Height 34 -Colors $colors -Anchor 'Bottom,Left'
+    $restoreButton = New-FrameGenNGButton -Text 'Restore selected' -X 302 -Y 295 -Width 125 -Height 34 -Colors $colors -Style Accent -Anchor 'Bottom,Right'
+    $deleteButton = New-FrameGenNGButton -Text 'Delete' -X 435 -Y 295 -Width 75 -Height 34 -Colors $colors -Style Danger -Anchor 'Bottom,Right'
+    $closeButton = New-FrameGenNGButton -Text 'Close' -X 518 -Y 295 -Width 86 -Height 34 -Colors $colors -Anchor 'Bottom,Right' -DialogResult Cancel
+    $dialog.CancelButton = $closeButton
+    $dialog.Controls.AddRange(@($createButton, $restoreButton, $deleteButton, $closeButton))
+
+    $refreshList = {
+        $list.Items.Clear()
+        foreach ($point in @(Get-FrameGenNGRestorePoints -UserRoot $script:resolvedUserRoot)) {
+            $item = New-Object System.Windows.Forms.ListViewItem(([datetime]$point.createdAt).ToLocalTime().ToString('yyyy-MM-dd HH:mm'))
+            [void]$item.SubItems.Add([string]$point.label)
+            [void]$item.SubItems.Add(('v' + [string]$point.version))
+            $typeText = if ([string]$point.kind -eq 'manual') { 'Manual' } else { 'Automatic' }
+            [void]$item.SubItems.Add($typeText)
+            [void]$item.SubItems.Add(('{0:N1} MB' -f ([long]$point.sizeBytes / 1MB)))
+            $item.Tag = $point
+            [void]$list.Items.Add($item)
+        }
+        $hasSelection = $list.SelectedItems.Count -eq 1
+        $restoreButton.Enabled = $hasSelection
+        $deleteButton.Enabled = $hasSelection
+    }
+    $list.Add_SelectedIndexChanged({
+        $hasSelection = $list.SelectedItems.Count -eq 1
+        $restoreButton.Enabled = $hasSelection
+        $deleteButton.Enabled = $hasSelection
+    })
+    $createButton.Add_Click({
+        try {
+            $createButton.Enabled = $false
+            New-FrameGenNGRestorePoint -UserRoot $script:resolvedUserRoot -Reason 'manual' -GameRoot $script:resolvedGameRoot -LauncherIni $LauncherIni | Out-Null
+            Write-ManagerLog -Message 'Manual restore point created.'
+            & $refreshList
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Unable to create restore point', 'OK', 'Error') | Out-Null
+        } finally { $createButton.Enabled = $true }
+    })
+    $deleteButton.Add_Click({
+        if ($list.SelectedItems.Count -ne 1) { return }
+        $point = $list.SelectedItems[0].Tag
+        $answer = [System.Windows.Forms.MessageBox]::Show("Delete '$($point.label)' permanently?", 'Delete restore point', 'YesNo', 'Warning')
+        if ($answer -ne 'Yes') { return }
+        try {
+            Remove-FrameGenNGRestorePoint -UserRoot $script:resolvedUserRoot -Id ([string]$point.id)
+            Write-ManagerLog -Message "Deleted restore point: $($point.label)."
+            & $refreshList
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Unable to delete restore point', 'OK', 'Error') | Out-Null
+        }
+    })
+    $restoreButton.Add_Click({
+        if ($list.SelectedItems.Count -ne 1) { return }
+        $point = $list.SelectedItems[0].Tag
+        $answer = [System.Windows.Forms.MessageBox]::Show(
+            "Restore FrameGenNG v$($point.version) from '$($point.label)'?`r`n`r`nThe current state will be saved automatically before anything changes.",
+            'Restore FrameGenNG', 'YesNo', 'Question')
+        if ($answer -ne 'Yes') { return }
+        try {
+            Start-FrameGenNGRestore -RestorePoint $point -PackageRoot (Split-Path -Parent $PSScriptRoot) -GameRoot $script:resolvedGameRoot -UserRoot $script:resolvedUserRoot -LauncherIni $LauncherIni -ManagerProcessId $PID | Out-Null
+            Write-ManagerLog -Message "Restore prepared for v$($point.version). Closing the manager…"
+            $dialog.Close()
+            $form.Close()
+        } catch {
+            [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Unable to start restore', 'OK', 'Error') | Out-Null
+        }
+    })
+
+    & $refreshList
+    [void]$dialog.ShowDialog($form)
+}
+
+$updateTimer = New-Object System.Windows.Forms.Timer
+$updateTimer.Interval = 350
+
+function Complete-UpdateCheck {
+    $updateTimer.Stop()
+    try {
+        $raw = (Receive-Job -Job $script:updateJob -ErrorAction Stop | Out-String).Trim()
+        $updateCheckResult = $raw | ConvertFrom-Json
+        if (-not [bool]$updateCheckResult.success) { throw [string]$updateCheckResult.error }
+        $script:updateInfo = $updateCheckResult.data
+        if ([bool]$script:updateInfo.UpdateAvailable) {
+            $updateButton.Text = "Update to v$($script:updateInfo.LatestVersion)"
+            Write-ManagerLog -Message "Update available: v$($script:updateInfo.LatestVersion)."
+        } else {
+            $updateButton.Text = 'Up to date — check again'
+            Write-ManagerLog -Message 'Update check: FrameGenNG is up to date.'
+            if ($script:updateCheckWasManual) {
+                [System.Windows.Forms.MessageBox]::Show('You already have the latest compatible FrameGenNG release.', 'FrameGenNG is up to date', 'OK', 'Information') | Out-Null
+            }
+        }
+    } catch {
+        $script:updateInfo = $null
+        $updateButton.Text = 'Check for updates'
+        Write-ManagerLog -Message "Update check unavailable: $($_.Exception.Message)"
+        if ($script:updateCheckWasManual) {
+            [System.Windows.Forms.MessageBox]::Show("FrameGenNG could not check GitHub Releases.`r`n`r`n$($_.Exception.Message)", 'Update check unavailable', 'OK', 'Warning') | Out-Null
+        }
+    } finally {
+        if ($null -ne $script:updateJob) {
+            Remove-Job -Job $script:updateJob -Force -ErrorAction SilentlyContinue
+            $script:updateJob = $null
+        }
+        $updateButton.Enabled = $true
+        $script:updateCheckWasManual = $false
+    }
+}
+
+function Start-UpdateCheck {
+    param([bool]$Manual = $false)
+    if ($null -ne $script:updateJob) { return }
+    $script:updateCheckWasManual = $Manual
+    $updateButton.Text = 'Checking for updates…'
+    $updateButton.Enabled = $false
+    $currentVersion = Get-FrameGenNGVersion
+    $includePrerelease = $false
+    $modulePath = Join-Path $PSScriptRoot 'FrameGenNG.Update.psm1'
+    $script:updateJob = Start-Job -ScriptBlock {
+        param($ModulePath, $Version, $Prerelease)
+        try {
+            Import-Module $ModulePath -Force
+            $updateInfo = Get-FrameGenNGUpdateInfo -CurrentVersion $Version -IncludePrerelease ([bool]$Prerelease)
+            [pscustomobject]@{ success = $true; data = $updateInfo; error = $null } | ConvertTo-Json -Depth 12 -Compress
+        } catch {
+            [pscustomobject]@{ success = $false; data = $null; error = $_.Exception.Message } | ConvertTo-Json -Depth 4 -Compress
+        }
+    } -ArgumentList $modulePath, $currentVersion, $includePrerelease
+    $updateTimer.Start()
+}
+
+$updateTimer.Add_Tick({
+    if ($null -ne $script:updateJob -and $script:updateJob.State -in @('Completed', 'Failed', 'Stopped')) {
+        Complete-UpdateCheck
+    }
+})
 
 function Refresh-ManagerStatus {
     try {
@@ -218,6 +474,7 @@ function Refresh-ManagerStatus {
         $script:resolvedUserRoot = Resolve-BeamNGUserRoot -LauncherIni $LauncherIni
         $gamePathBox.Text = $script:resolvedGameRoot
         $userPathBox.Text = $script:resolvedUserRoot
+        $gamePathText.Text = "BeamNG installation: $($script:resolvedGameRoot)"
         $status = Get-FrameGenNGStatus -GameRoot $script:resolvedGameRoot -LauncherIni $LauncherIni
         $statusText.Text = Format-StatusText -Status $status
         if (-not [bool]$status.installed) {
@@ -238,10 +495,11 @@ function Refresh-ManagerStatus {
         }
         return $status
     } catch {
-        $statusText.Text = "Configuration invalide`r`n$($_.Exception.Message)"
+        $statusText.Text = "Invalid configuration`r`n$($_.Exception.Message)"
         $statusDot.ForeColor = $colors.Danger
-        $gamePathBox.Text = if ($null -ne $GameRoot) { $GameRoot } else { 'Package non placé dans la racine BeamNG' }
-        $userPathBox.Text = 'Indisponible'
+        $gamePathBox.Text = if ($null -ne $GameRoot) { $GameRoot } else { 'Package is not in the BeamNG root folder' }
+        $userPathBox.Text = 'Unavailable'
+        $gamePathText.Text = 'BeamNG installation could not be detected.'
         $installButton.Enabled = $false
         $repairButton.Enabled = $false
         $uninstallButton.Enabled = $false
@@ -255,16 +513,16 @@ $installButton.Add_Click({
         Set-BusyState -Busy $true
         $detected = Get-NvidiaRtxProfile -Profile $Profile
         $answer = [System.Windows.Forms.MessageBox]::Show(
-            "GPU : $($detected.Gpu)`r`nProfil : $($detected.Profile)`r`n`r`nFrameGenNG va sauvegarder les fichiers existants puis installer la couche graphique. Continuer ?",
-            'Installer FrameGenNG', 'YesNo', 'Question')
+            "GPU: $($detected.Gpu)`r`nProfile: $($detected.Profile)`r`n`r`nFrameGenNG will verify its package, back up user overrides, and install the graphics layer. Installation stops if another graphics proxy is present. Continue?",
+            'Install FrameGenNG', 'YesNo', 'Question')
         if ($answer -ne 'Yes') { return }
-        Write-ManagerLog -Message 'Installation en cours…'
-        $result = Install-FrameGenNG -GameRoot $script:resolvedGameRoot -LauncherIni $LauncherIni -Profile $Profile
-        Write-ManagerLog -Message "Installation terminée : $($result.profile)."
-        [System.Windows.Forms.MessageBox]::Show('FrameGenNG est installé. Lancez BeamNG en DirectX 12 et activez DLSS.', 'Installation terminée', 'OK', 'Information') | Out-Null
+        Write-ManagerLog -Message 'Installing…'
+        $installationState = Install-FrameGenNG -GameRoot $script:resolvedGameRoot -LauncherIni $LauncherIni -Profile $Profile
+        Write-ManagerLog -Message "Installation complete: $($installationState.profile)."
+        [System.Windows.Forms.MessageBox]::Show('FrameGenNG is installed. Start BeamNG in DirectX 12 and enable DLSS.', 'Installation complete', 'OK', 'Information') | Out-Null
     } catch {
-        Write-ManagerLog -Message "Erreur : $($_.Exception.Message)"
-        [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Installation impossible', 'OK', 'Error') | Out-Null
+        Write-ManagerLog -Message "Error: $($_.Exception.Message)"
+        [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Installation failed', 'OK', 'Error') | Out-Null
     } finally {
         Set-BusyState -Busy $false
         Refresh-ManagerStatus | Out-Null
@@ -273,16 +531,16 @@ $installButton.Add_Click({
 
 $repairButton.Add_Click({
     try {
-        $answer = [System.Windows.Forms.MessageBox]::Show("La réparation restaure d’abord l’installation précédente, puis réinstalle ce package. Continuer ?", 'Réparer FrameGenNG', 'YesNo', 'Question')
+        $answer = [System.Windows.Forms.MessageBox]::Show('Repair preserves your Frame Generation settings, safely removes the current integration, then rebuilds it from the current BeamNG files. Continue?', 'Repair FrameGenNG', 'YesNo', 'Question')
         if ($answer -ne 'Yes') { return }
         Set-BusyState -Busy $true
-        Write-ManagerLog -Message 'Réparation en cours…'
+        Write-ManagerLog -Message 'Repairing…'
         Repair-FrameGenNG -GameRoot $script:resolvedGameRoot -LauncherIni $LauncherIni | Out-Null
-        Write-ManagerLog -Message 'Réparation terminée.'
-        [System.Windows.Forms.MessageBox]::Show('FrameGenNG a été réparé.', 'Réparation terminée', 'OK', 'Information') | Out-Null
+        Write-ManagerLog -Message 'Repair complete.'
+        [System.Windows.Forms.MessageBox]::Show('FrameGenNG has been rebuilt for the current BeamNG installation. Your Frame Generation settings were preserved.', 'Repair complete', 'OK', 'Information') | Out-Null
     } catch {
-        Write-ManagerLog -Message "Erreur : $($_.Exception.Message)"
-        [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Réparation impossible', 'OK', 'Error') | Out-Null
+        Write-ManagerLog -Message "Error: $($_.Exception.Message)"
+        [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Repair failed', 'OK', 'Error') | Out-Null
     } finally {
         Set-BusyState -Busy $false
         Refresh-ManagerStatus | Out-Null
@@ -291,16 +549,17 @@ $repairButton.Add_Click({
 
 $uninstallButton.Add_Click({
     try {
-        $answer = [System.Windows.Forms.MessageBox]::Show("Les fichiers d’origine sauvegardés seront restaurés. Les sauvegardes seront conservées. Désinstaller FrameGenNG ?", 'Désinstaller FrameGenNG', 'YesNo', 'Warning')
+        $answer = [System.Windows.Forms.MessageBox]::Show('The backed-up original files will be restored. Backups will be preserved. Uninstall FrameGenNG?', 'Uninstall FrameGenNG', 'YesNo', 'Warning')
         if ($answer -ne 'Yes') { return }
         Set-BusyState -Busy $true
-        Write-ManagerLog -Message "Restauration des fichiers d’origine…"
-        $result = Uninstall-FrameGenNG -GameRoot $script:resolvedGameRoot -LauncherIni $LauncherIni
-        Write-ManagerLog -Message "Désinstallation terminée. Sauvegarde : $($result.backupKept)"
-        [System.Windows.Forms.MessageBox]::Show("FrameGenNG est désinstallé et les fichiers d’origine ont été restaurés.", 'Désinstallation terminée', 'OK', 'Information') | Out-Null
+        Write-ManagerLog -Message 'Restoring original files…'
+        $uninstallSummary = Uninstall-FrameGenNG -GameRoot $script:resolvedGameRoot -LauncherIni $LauncherIni
+        Write-ManagerLog -Message "Uninstall complete. Backup: $($uninstallSummary.backupKept)"
+        $message = if ([bool]$uninstallSummary.gameUpdateDetected) { 'FrameGenNG has been removed. Files replaced by a BeamNG update were preserved, and recovery copies were kept.' } else { 'FrameGenNG has been uninstalled and the original files were restored.' }
+        [System.Windows.Forms.MessageBox]::Show($message, 'Uninstall complete', 'OK', 'Information') | Out-Null
     } catch {
-        Write-ManagerLog -Message "Erreur : $($_.Exception.Message)"
-        [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Désinstallation impossible', 'OK', 'Error') | Out-Null
+        Write-ManagerLog -Message "Error: $($_.Exception.Message)"
+        [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Uninstall failed', 'OK', 'Error') | Out-Null
     } finally {
         Set-BusyState -Busy $false
         Refresh-ManagerStatus | Out-Null
@@ -309,25 +568,71 @@ $uninstallButton.Add_Click({
 
 $diagnosticButton.Add_Click({
     try {
-        Set-BusyState -Busy $true
-        $status = Get-FrameGenNGStatus -GameRoot $script:resolvedGameRoot -LauncherIni $LauncherIni
-        if (-not [bool]$status.installed) {
-            Write-ManagerLog -Message "Diagnostic : FrameGenNG n’est pas installé."
-        } elseif ([bool]$status.healthy) {
-            Write-ManagerLog -Message "Diagnostic : installation intacte, profil $($status.profile)."
-        } else {
-            $broken = @($status.checks | Where-Object { -not $_.matchesInstalled })
-            Write-ManagerLog -Message "Diagnostic : $($broken.Count) élément(s) à réparer."
-            foreach ($entry in $broken) { Write-ManagerLog -Message "À réparer : $($entry.destination)" }
-        }
+        if ($null -eq $script:resolvedGameRoot -or $null -eq $script:resolvedUserRoot) { Refresh-ManagerStatus | Out-Null }
+        Show-DiagnosticsDialog
     } catch {
-        Write-ManagerLog -Message "Erreur de diagnostic : $($_.Exception.Message)"
-    } finally {
-        Set-BusyState -Busy $false
-        Refresh-ManagerStatus | Out-Null
+        Write-ManagerLog -Message "Diagnostics error: $($_.Exception.Message)"
+        [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Diagnostics unavailable', 'OK', 'Error') | Out-Null
     }
 })
 
-$form.Add_Shown({ Refresh-ManagerStatus | Out-Null })
+$restorePointsButton.Add_Click({
+    try {
+        if ($null -eq $script:resolvedGameRoot -or $null -eq $script:resolvedUserRoot) {
+            Refresh-ManagerStatus | Out-Null
+        }
+        Show-RestorePointsDialog
+    } catch {
+        Write-ManagerLog -Message "Restore-points error: $($_.Exception.Message)"
+        [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Restore points unavailable', 'OK', 'Error') | Out-Null
+    }
+})
+
+$updateButton.Add_Click({
+    if ($null -eq $script:updateInfo -or -not [bool]$script:updateInfo.UpdateAvailable) {
+        Start-UpdateCheck -Manual $true
+        return
+    }
+    $answer = [System.Windows.Forms.MessageBox]::Show(
+        "FrameGenNG v$($script:updateInfo.LatestVersion) is available.`r`n`r`nThe manager will download and verify the official release, preserve your Frame Generation settings, and restart after the update.`r`n`r`nContinue?",
+        'Update FrameGenNG', 'YesNo', 'Question')
+    if ($answer -ne 'Yes') { return }
+    $launched = $false
+    try {
+        Set-BusyState -Busy $true
+        $updateButton.Text = 'Downloading and verifying…'
+        Write-ManagerLog -Message "Downloading FrameGenNG v$($script:updateInfo.LatestVersion)…"
+        [System.Windows.Forms.Application]::DoEvents()
+        if ($null -eq $script:resolvedGameRoot -or $null -eq $script:resolvedUserRoot) {
+            Refresh-ManagerStatus | Out-Null
+        }
+        Start-FrameGenNGUpdate -UpdateInfo $script:updateInfo -PackageRoot (Split-Path -Parent $PSScriptRoot) -GameRoot $script:resolvedGameRoot -UserRoot $script:resolvedUserRoot -LauncherIni $LauncherIni -ManagerProcessId $PID | Out-Null
+        $launched = $true
+        Write-ManagerLog -Message 'The verified updater is ready. Closing the manager…'
+        $form.Close()
+    } catch {
+        Write-ManagerLog -Message "Update failed before installation: $($_.Exception.Message)"
+        [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Unable to start the update', 'OK', 'Error') | Out-Null
+    } finally {
+        if (-not $launched) {
+            Set-BusyState -Busy $false
+            if ($null -ne $script:updateInfo -and [bool]$script:updateInfo.UpdateAvailable) {
+                $updateButton.Text = "Update to v$($script:updateInfo.LatestVersion)"
+            }
+        }
+    }
+})
+
+$form.Add_Shown({
+    Refresh-ManagerStatus | Out-Null
+    Start-UpdateCheck -Manual $false
+})
+$form.Add_FormClosed({
+    $updateTimer.Stop()
+    if ($null -ne $script:updateJob) {
+        Stop-Job -Job $script:updateJob -ErrorAction SilentlyContinue
+        Remove-Job -Job $script:updateJob -Force -ErrorAction SilentlyContinue
+    }
+})
 [void]$form.ShowDialog()
 

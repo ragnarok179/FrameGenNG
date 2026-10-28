@@ -1,35 +1,61 @@
-# Architecture de FrameGenNG
+# FrameGenNG architecture
 
 ```text
 BeamNG DX12 + DLSS SR
         │
         ▼
-FrameGenNG / OptiScaler (dxgi.dll)
-  ├─ récupère couleur, profondeur et vecteurs de mouvement
-  ├─ lit les réglages FrameGenNG du dossier utilisateur
-  ├─ adapte scRGB vers HDR10 pour la chaîne FG
-  └─ signale proprement la fermeture à NGX
+FrameGenNG rendering bridge (dxgi.dll)
+  ├─ receives color, depth, and motion vectors
+  ├─ reads FrameGenNG settings from the BeamNG user folder
+  ├─ adapts the presentation path used by Frame Generation
+  └─ signals shutdown safely to NGX
         │
-        ├─ RTX 20/30 ─► dlssg_for_sm86 (d3d12.dll + kernels SM75/SM86)
+        ├─ RTX 20/30 ─► FrameGenNG compatibility engine (d3d12.dll + SM75/SM86 kernels)
         │
-        └─ RTX 40/50 ─► runtime DLSS-G natif
+        └─ RTX 40/50 ─► native DLSS-G runtime
         │
         ▼
-Swapchain avec images générées
+Swapchain with generated frames
 ```
 
-## Intégration BeamNG
+## BeamNG integration
 
-L'installation ajoute deux options sous les paramètres DLSS :
+The installer adds two controls below the DLSS settings:
 
-- activation de la génération d'images ;
-- multiplicateur 2×, 3× ou 4×.
+- Frame Generation enable/disable;
+- a 2×, 3×, or 4× multiplier.
 
-Ces contrôles sont masqués lorsque DLSS n'est pas sélectionné. La DLL relit les réglages au maximum deux fois par seconde, ce qui évite d'exposer l'interface technique d'OptiScaler.
+The controls are hidden when DLSS is not selected. The DLL reads the settings at most twice per second. Its separate overlay, shortcuts, splash screen, debugging UI, alternative upscalers, plugin loading, sharpening, output scaling, and magnifier are disabled in the production configuration.
 
-Une extension GELua écrit un signal pendant `onPreExit`. La DLL l'observe avant le démontage D3D12 et évite les appels de fermeture NGX devenus dangereux. Ce pont corrige le plantage observé à la fermeture du prototype.
+A small, version-checked shader patch routes BeamNG's scRGB output mode through the game's existing HDR10 encoder when FrameGenNG presents an HDR10 swapchain. This keeps the encoded pixels and the advertised DXGI color space aligned. Installation stops on an unknown shader layout instead of applying an unverified text replacement.
 
-## Installation réversible
+A GELua extension writes a signal during `onPreExit`. The DLL observes it before D3D12 teardown and avoids unsafe late NGX shutdown calls.
 
-Le gestionnaire applique une transaction : validation, sauvegarde, copie, modification de l'interface, puis écriture de l'état. En cas d'échec, les cibles déjà touchées sont restaurées. L'état contient les empreintes SHA-256 des fichiers posés afin que la désinstallation puisse détecter une modification ultérieure et la préserver dans une copie de récupération.
+## Reversible installation
+
+The manager applies changes as a transaction: validate every payload hash, reject proxy collisions, back up existing user overrides and the HDR encoder, copy, patch the shader and interface, invalidate BeamNG's rendering shader cache, then record installation state. Uninstall invalidates the same disposable cache after restoring the vanilla encoder. If a step fails, already changed targets are restored. The state records SHA-256 hashes and is duplicated inside its backup folder so uninstall can recover from a missing primary state file.
+
+The state also records the BeamNG executable identity and the hashes of the UI sources. A changed identity marks the installation as requiring repair. During removal after a game update, a game file whose content no longer matches the installed mod is preserved instead of being replaced by a backup from the previous BeamNG version.
+
+## Update transaction
+
+The manager queries the public GitHub Releases API and selects the newest compatible semantic version. Drafts and prereleases are ignored. The release ZIP and sidecar SHA-256 asset must both be present.
+
+After download, FrameGenNG validates the checksum, optional GitHub asset digest, ZIP root, required files, embedded `VERSION`, payload manifest, sizes, and payload hashes. A helper process then waits for the manager to close, records the current FG settings, uninstalls the active integration, backs up and replaces the complete package, installs the new version, and restores the settings. A failed new installation triggers the inverse transaction using the preserved package backup.
+
+## Restore points and retention
+
+Durable restore points live under `FrameGenNG\restore-points` in the BeamNG user folder. Each point contains English metadata and a SHA-256-protected package snapshot, together with the recorded install/profile state, BeamNG executable identity, and Frame Generation settings. Automatic points are created before installation, repair, update, uninstall, and restore. A restore operation first creates another safety point, then uses the same transactional package-swap and rollback path as an update.
+
+The manager retains the five newest automatic points. Manual points are kept until the user deletes them, with a limit of ten to prevent accidental unbounded growth. Short-lived package rollback copies are removed after a successful transaction, while obsolete technical install/recovery backups are capped separately. Restore is refused when the current BeamNG executable differs from the snapshot identity; Repair is the correct path after a game update.
+
+## Diagnostics
+
+Standard diagnostics read the existing installation state and managed-file hashes without enabling persistent logging. Advanced mode is an explicit, persisted opt-in under the BeamNG user folder. It records manager actions and errors only; it does not introduce per-frame game instrumentation. Manager logs rotate at 2 MB and only the seven newest files are retained.
+
+Diagnostic export is user-initiated. It stages a structured report plus bounded log excerpts, installation/update state, payload metadata, and GPU/driver information, then writes a ZIP under `FrameGenNG\diagnostics\exports`. Temporary staging data is removed in a `finally` block and only the five newest exported bundles are retained. The UI warns that logs and recorded paths may contain personal information before export.
+
+## Manager boundaries
+
+The manager script coordinates user actions and status refreshes. Core installation, update, and diagnostic behavior remains in dedicated modules. Restore-point and backup-retention behavior is isolated in `manager/Core/FrameGenNG.Recovery.ps1` and loaded into the core module scope. Shared WinForms dialog and button construction lives in `manager/FrameGenNG.Ui.psm1`, keeping presentation details out of the transaction modules.
 
