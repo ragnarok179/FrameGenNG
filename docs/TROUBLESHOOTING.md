@@ -6,7 +6,9 @@ Close the game with Alt+F4, open the manager, and select **Repair**. Confirm tha
 
 ## Incorrect, washed-out, or oversaturated colors
 
-Close BeamNG and select **Repair**. FrameGenNG must keep BeamNG's HDR encoder aligned with the color space used by its presentation path. Repair reapplies the compatible encoder patch from the current game files. If Repair reports an unsupported BeamNG HDR encoder, leave FrameGenNG uninstalled and use a release compatible with that BeamNG version.
+FrameGenNG ships with the SDR-safe presentation path. Do not enable `ForceHDR` or `UseHDR10` in `Bin64\FrameGenNG.ini` while Windows HDR is disabled or the selected monitor does not support HDR; doing so can present HDR10-encoded pixels through an SDR color space and cause extreme saturation.
+
+When Windows HDR is active, both options may be enabled together to use the HDR10 bridge. Fully close BeamNG before changing them. If the image remains incorrect, restore both options to `false`, restart the game, and export a diagnostic bundle.
 
 ## Frame Generation does not activate
 

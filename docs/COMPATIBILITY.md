@@ -37,6 +37,6 @@ Higher multipliers need a stable base frame rate. At a low base frame rate they 
 ## Known compatibility boundaries
 
 - Other injectors that place their own `dxgi.dll` or `d3d12.dll` beside the BeamNG executable may conflict with FrameGenNG.
-- NVIDIA DLSS-G does not natively support an FP16/scRGB presentation path. FrameGenNG converts BeamNG's tested HDR path to HDR10, but HDR behavior has only been validated on the current test system.
+- NVIDIA DLSS-G does not natively support an FP16/scRGB presentation path. FrameGenNG includes an optional HDR10 bridge, but the distributed configuration keeps it disabled to remain safe on SDR displays. HDR behavior has only been validated on the current test system.
 - Laptop hybrid-graphics configurations must run BeamNG on the NVIDIA RTX GPU rather than the integrated GPU.
 
