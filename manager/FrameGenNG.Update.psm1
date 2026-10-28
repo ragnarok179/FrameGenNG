@@ -3,24 +3,49 @@ $ErrorActionPreference = 'Stop'
 
 $script:DefaultReleaseApi = 'https://api.github.com/repos/ragnarok179/FrameGenNG/releases?per_page=20'
 
-function ConvertTo-FrameGenNGSemVer {
+function ConvertTo-FrameGenNGVersion {
     param([Parameter(Mandatory)][string]$Version)
 
     $value = $Version.Trim()
     if ($value.StartsWith('v', [System.StringComparison]::OrdinalIgnoreCase)) {
         $value = $value.Substring(1)
     }
-    if ($value -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\.(0|[1-9]\d*))?(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z.-]+)?$') {
-        throw "Invalid semantic version: $Version"
+    if ($value -notmatch '^(0|[1-9]\d*)\.(\d+)(?:\.(\d+))?(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z.-]+)?$') {
+        throw "Invalid version: $Version"
     }
+    $patchText = if ([string]::IsNullOrWhiteSpace($Matches[3])) { '0' } else { [string]$Matches[3] }
     return [pscustomobject]@{
         Original = $Version
         Normalized = $value
         Major = [int]$Matches[1]
         Minor = [int]$Matches[2]
-        Patch = if ([string]::IsNullOrWhiteSpace($Matches[3])) { 0 } else { [int]$Matches[3] }
+        Patch = [int]$patchText
+        MajorText = [string]$Matches[1]
+        MinorText = [string]$Matches[2]
+        PatchText = $patchText
         Prerelease = if ([string]::IsNullOrWhiteSpace($Matches[4])) { $null } else { [string]$Matches[4] }
     }
+}
+
+function Compare-FrameGenNGVersionSegment {
+    param(
+        [Parameter(Mandatory)][int]$LeftValue,
+        [Parameter(Mandatory)][string]$LeftText,
+        [Parameter(Mandatory)][int]$RightValue,
+        [Parameter(Mandatory)][string]$RightText
+    )
+
+    if ($LeftValue -lt $RightValue) { return -1 }
+    if ($LeftValue -gt $RightValue) { return 1 }
+    if ($LeftText -ceq $RightText) { return 0 }
+
+    $leftIsPadded = $LeftText.Length -gt 1 -and $LeftText.StartsWith('0')
+    $rightIsPadded = $RightText.Length -gt 1 -and $RightText.StartsWith('0')
+    if ($leftIsPadded -and -not $rightIsPadded) { return -1 }
+    if (-not $leftIsPadded -and $rightIsPadded) { return 1 }
+    if ($LeftText.Length -gt $RightText.Length) { return -1 }
+    if ($LeftText.Length -lt $RightText.Length) { return 1 }
+    return 0
 }
 
 function Compare-FrameGenNGVersion {
@@ -29,18 +54,20 @@ function Compare-FrameGenNGVersion {
         [Parameter(Mandatory)][string]$Right
     )
 
-    $a = ConvertTo-FrameGenNGSemVer -Version $Left
-    $b = ConvertTo-FrameGenNGSemVer -Version $Right
+    $leftVersion = ConvertTo-FrameGenNGVersion -Version $Left
+    $rightVersion = ConvertTo-FrameGenNGVersion -Version $Right
     foreach ($field in @('Major', 'Minor', 'Patch')) {
-        if ($a.$field -lt $b.$field) { return -1 }
-        if ($a.$field -gt $b.$field) { return 1 }
+        $comparison = Compare-FrameGenNGVersionSegment `
+            -LeftValue $leftVersion.$field -LeftText $leftVersion."${field}Text" `
+            -RightValue $rightVersion.$field -RightText $rightVersion."${field}Text"
+        if ($comparison -ne 0) { return $comparison }
     }
-    if ($null -eq $a.Prerelease -and $null -eq $b.Prerelease) { return 0 }
-    if ($null -eq $a.Prerelease) { return 1 }
-    if ($null -eq $b.Prerelease) { return -1 }
+    if ($null -eq $leftVersion.Prerelease -and $null -eq $rightVersion.Prerelease) { return 0 }
+    if ($null -eq $leftVersion.Prerelease) { return 1 }
+    if ($null -eq $rightVersion.Prerelease) { return -1 }
 
-    $leftParts = @($a.Prerelease -split '\.')
-    $rightParts = @($b.Prerelease -split '\.')
+    $leftParts = @($leftVersion.Prerelease -split '\.')
+    $rightParts = @($rightVersion.Prerelease -split '\.')
     $count = [Math]::Max($leftParts.Count, $rightParts.Count)
     for ($i = 0; $i -lt $count; $i++) {
         if ($i -ge $leftParts.Count) { return -1 }
@@ -75,7 +102,7 @@ function Select-FrameGenNGRelease {
     foreach ($release in @($Releases)) {
         if ([bool]$release.draft) { continue }
         if ([bool]$release.prerelease -and -not $IncludePrerelease) { continue }
-        try { $candidate = (ConvertTo-FrameGenNGSemVer -Version ([string]$release.tag_name)).Normalized } catch { continue }
+        try { $candidate = (ConvertTo-FrameGenNGVersion -Version ([string]$release.tag_name)).Normalized } catch { continue }
         if ($null -eq $selected -or (Compare-FrameGenNGVersion -Left $candidate -Right $selectedVersion) -gt 0) {
             $selected = $release
             $selectedVersion = $candidate
@@ -350,7 +377,7 @@ function Start-FrameGenNGRestore {
 }
 
 Export-ModuleMember -Function @(
-    'ConvertTo-FrameGenNGSemVer',
+    'ConvertTo-FrameGenNGVersion',
     'Compare-FrameGenNGVersion',
     'Select-FrameGenNGRelease',
     'Get-FrameGenNGUpdateInfo',

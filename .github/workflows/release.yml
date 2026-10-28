@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version from the VERSION file, for example 1.2
+        description: Version from the VERSION file, for example 1.01 or 1.2
         required: true
         type: string
 
