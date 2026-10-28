@@ -10,7 +10,7 @@ function ConvertTo-FrameGenNGSemVer {
     if ($value.StartsWith('v', [System.StringComparison]::OrdinalIgnoreCase)) {
         $value = $value.Substring(1)
     }
-    if ($value -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z.-]+)?$') {
+    if ($value -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)(?:\.(0|[1-9]\d*))?(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z.-]+)?$') {
         throw "Invalid semantic version: $Version"
     }
     return [pscustomobject]@{
@@ -18,7 +18,7 @@ function ConvertTo-FrameGenNGSemVer {
         Normalized = $value
         Major = [int]$Matches[1]
         Minor = [int]$Matches[2]
-        Patch = [int]$Matches[3]
+        Patch = if ([string]::IsNullOrWhiteSpace($Matches[3])) { 0 } else { [int]$Matches[3] }
         Prerelease = if ([string]::IsNullOrWhiteSpace($Matches[4])) { $null } else { [string]$Matches[4] }
     }
 }
