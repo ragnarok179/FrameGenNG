@@ -88,14 +88,17 @@ jobs:
           }
 
           $checksum = $Matches[1]
-          $releaseNotes = "## SHA-256`n`n``$checksum`` — ``FrameGenNG-v$env:RELEASE_VERSION.zip``"
+          $releaseNotes = @(
+            "SHA-256: ``$checksum`` — ``FrameGenNG-v$env:RELEASE_VERSION.zip``",
+            '',
+            'Before installing FrameGenNG, please read the [installation, update, repair, and removal instructions](https://github.com/ragnarok179/FrameGenNG#readme).'
+          ) -join "`n"
           $arguments = @(
             'release', 'create', "v$env:RELEASE_VERSION",
             $zipPath,
             $checksumPath,
             '--target', $env:GITHUB_SHA,
             '--title', "FrameGenNG v$env:RELEASE_VERSION",
-            '--notes', $releaseNotes,
-            '--generate-notes'
+            '--notes', $releaseNotes
           )
           & gh @arguments
