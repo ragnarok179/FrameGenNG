@@ -14,9 +14,9 @@ The complete GPLv3 text is provided in `LICENSE`. Copyright remains with the Opt
 ## dlssg_for_sm86
 
 - Project and author: <https://github.com/sdli1995/dlssg_for_sm86> by `sdli1995`
-- Version integrated into the prototype: 0.4.0
-- Project-owned code: MIT, according to the upstream notice
-- NVIDIA runtime and kernel images: third-party binaries explicitly excluded from the upstream MIT license
+- Version integrated into FrameGenNG: 0.4.0
+- Project source: GNU GPL version 3, according to the upstream license and notice
+- NVIDIA runtime and kernel images: separate third-party material not relicensed under the upstream GPLv3 license
 - RTX 20/SM75 adaptation: credited upstream to `Coldwood1026`
 - Upstream notice: <https://github.com/sdli1995/dlssg_for_sm86/blob/main/THIRD_PARTY_NOTICES.txt>
 

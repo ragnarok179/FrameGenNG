@@ -2,23 +2,28 @@
 
 Frame Generation integrated into the BeamNG.drive graphics settings.
 
-FrameGenNG uses BeamNG's native DLSS input in DirectX 12 and adds adjustable Frame Generation directly below the game's DLSS options. The project targets the full NVIDIA RTX family:
+FrameGenNG uses BeamNG's native DLSS input in DirectX 12 and adds adjustable Frame Generation directly below the game's DLSS options. The project targets GeForce RTX 20, 30, 40, and 50 series GPUs:
 
 - RTX 20 and RTX 30: compatibility path powered by `dlssg_for_sm86`;
 - RTX 40 and RTX 50: native DLSS-G path through the FrameGenNG integration layer;
-- future RTX generations: a compatibility goal after validation.
+- future RTX generations: a compatibility goal after validation, not a current guarantee.
 
 > **Current validation:** FrameGenNG has been validated on BeamNG.drive 0.40.3.0 with an RTX 3060 Laptop GPU. RTX 20, 40, and 50 GPUs still require testing before compatibility can be guaranteed.
 
 ## Requirements
 
-- Windows 10 or 11, 64-bit
+- Windows 10 version 2004 (build 19041) or newer, or Windows 11, 64-bit
 - BeamNG.drive running in DirectX 12
 - DLSS enabled in BeamNG
-- An up-to-date NVIDIA driver
+- Hardware-accelerated GPU scheduling enabled in Windows
+- An up-to-date NVIDIA driver; R580 or newer is recommended for the RTX 20/30 compatibility path
 - Enough free VRAM for Frame Generation
 
 No CUDA Toolkit, Python installation, or separate OptiScaler setup is required.
+
+FrameGenNG automatically supports the consumer GeForce RTX 20/30/40/50 naming scheme. Professional RTX A/PRO models and future RTX generations are not currently guaranteed and may be rejected instead of receiving an unvalidated profile.
+
+Frame Generation works best from a stable base frame rate. 2× is the recommended multiplier; 3× and 4× availability depends on the GPU, driver, and bundled runtime. Higher multipliers can increase latency and make interpolation artifacts more visible when the base frame rate is low.
 
 ## Quick installation
 
@@ -29,6 +34,8 @@ No CUDA Toolkit, Python installation, or separate OptiScaler setup is required.
 5. Start BeamNG in DirectX 12, enable DLSS, then configure Frame Generation below the DLSS settings.
 
 BeamNG will warn about `dxgi.dll` and, on RTX 20/30, `d3d12.dll`. This is expected: these proxy libraries load the FrameGenNG graphics layer. Select **Cancel** in that warning if you do not want BeamNG to show it again.
+
+Other graphics injectors or wrappers that install their own `dxgi.dll` or `d3d12.dll` next to the BeamNG executable may conflict with FrameGenNG. Remove or disable the other injector before installing FrameGenNG.
 
 ## Safe removal and recovery
 
@@ -56,7 +63,7 @@ The manager and documentation use English. The in-game FrameGenNG settings autom
 
 ## License and credits
 
-FrameGenNG source code and scripts are Copyright (C) 2026 `ragnarok179` and are released under the [GNU General Public License v3.0 or later](LICENSE).
+FrameGenNG source code and scripts are Copyright (C) 2026 `ragnarok179` and are released under the [GNU General Public License v3.0 or later](LICENSE). Redistributions and derivative works that include FrameGenNG-authored material must preserve the author attribution and original repository link stated in [NOTICE](NOTICE).
 
 FrameGenNG includes a modified GPLv3 build of [OptiScaler](https://github.com/optiscaler/OptiScaler) and an RTX 20/30 compatibility path based on [dlssg_for_sm86](https://github.com/sdli1995/dlssg_for_sm86) by `sdli1995`, including the RTX 20/SM75 adaptation credited upstream to `Coldwood1026`. NVIDIA, Streamline, NGX, and other bundled third-party components remain under their own terms. See [NOTICE](NOTICE) and [Third-party notices](THIRD_PARTY_NOTICES.md).
 
