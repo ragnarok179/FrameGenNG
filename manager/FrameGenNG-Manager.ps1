@@ -86,13 +86,13 @@ $colors = @{
     Danger = [System.Drawing.Color]::FromArgb(192, 0, 0)
 }
 
-$collapsedFormHeight = 300
-$expandedFormHeight = 440
-$collapsedFooterTop = 244
-$expandedFooterTop = 384
+$collapsedFormHeight = 258
+$expandedFormHeight = 398
+$collapsedFooterTop = 202
+$expandedFooterTop = 342
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "FrameGenNG"
+$form.Text = "FrameGenNG v$(Get-FrameGenNGVersion)"
 $form.StartPosition = 'CenterScreen'
 $form.ClientSize = New-Object System.Drawing.Size(470, $collapsedFormHeight)
 $form.BackColor = $colors.Window
@@ -103,28 +103,12 @@ $form.MinimizeBox = $false
 $form.ShowIcon = $false
 $form.FormBorderStyle = 'FixedDialog'
 
-$title = New-Object System.Windows.Forms.Label
-$title.Text = 'FrameGenNG'
-$title.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 15)
-$title.ForeColor = $colors.Text
-$title.Location = New-Object System.Drawing.Point(30, 24)
-$title.AutoSize = $true
-$form.Controls.Add($title)
-
-$versionLabel = New-Object System.Windows.Forms.Label
-$versionLabel.Text = "Version $(Get-FrameGenNGVersion)"
-$versionLabel.TextAlign = 'MiddleRight'
-$versionLabel.Location = New-Object System.Drawing.Point(320, 27)
-$versionLabel.Size = New-Object System.Drawing.Size(120, 20)
-$versionLabel.ForeColor = $colors.Muted
-$form.Controls.Add($versionLabel)
-
 $statusDot = New-Object System.Windows.Forms.Label
 $statusDot.Visible = $false
 
 $statusText = New-Object System.Windows.Forms.Label
 $statusText.Text = 'Checking…'
-$statusText.Location = New-Object System.Drawing.Point(31, 65)
+$statusText.Location = New-Object System.Drawing.Point(31, 23)
 $statusText.Size = New-Object System.Drawing.Size(408, 38)
 $statusText.ForeColor = $colors.Text
 $form.Controls.Add($statusText)
@@ -134,7 +118,7 @@ $gamePathText.Visible = $false
 
 function New-ActionButton {
     param([string]$Text, [int]$X, [int]$Width, [System.Drawing.Color]$BackColor)
-    return New-FrameGenNGButton -Text $Text -X $X -Y 110 -Width $Width -Height 30 -Colors $colors -Style Secondary
+    return New-FrameGenNGButton -Text $Text -X $X -Y 68 -Width $Width -Height 30 -Colors $colors -Style Secondary
 }
 
 $installButton = New-ActionButton -Text 'Install' -X 31 -Width 104 -BackColor $colors.Accent
@@ -142,12 +126,12 @@ $repairButton = New-ActionButton -Text 'Repair' -X 143 -Width 104 -BackColor $co
 $uninstallButton = New-ActionButton -Text 'Uninstall' -X 255 -Width 104 -BackColor $colors.PanelRaised
 $form.Controls.AddRange(@($installButton, $repairButton, $uninstallButton))
 
-$updateButton = New-FrameGenNGButton -Text 'Check for updates' -X 31 -Y 152 -Width 328 -Height 30 -Colors $colors
+$updateButton = New-FrameGenNGButton -Text 'Check for updates' -X 31 -Y 110 -Width 328 -Height 30 -Colors $colors
 $form.Controls.Add($updateButton)
 
-$restorePointsButton = New-FrameGenNGButton -Text 'Restore points…' -X 31 -Y 196 -Width 130 -Height 28 -Colors $colors
-$diagnosticButton = New-FrameGenNGButton -Text 'Diagnostics…' -X 169 -Y 196 -Width 112 -Height 28 -Colors $colors
-$detailsButton = New-FrameGenNGButton -Text 'Details ▸' -X 289 -Y 196 -Width 70 -Height 28 -Colors $colors
+$restorePointsButton = New-FrameGenNGButton -Text 'Restore points…' -X 31 -Y 154 -Width 130 -Height 28 -Colors $colors
+$diagnosticButton = New-FrameGenNGButton -Text 'Diagnostics…' -X 169 -Y 154 -Width 112 -Height 28 -Colors $colors
+$detailsButton = New-FrameGenNGButton -Text 'Details ▸' -X 289 -Y 154 -Width 70 -Height 28 -Colors $colors
 $form.Controls.AddRange(@($restorePointsButton, $diagnosticButton, $detailsButton))
 
 $footer = New-Object System.Windows.Forms.Panel
@@ -172,7 +156,7 @@ $userPathBox = New-Object System.Windows.Forms.TextBox
 $userPathBox.Visible = $false
 
 $logBox = New-Object System.Windows.Forms.TextBox
-$logBox.Location = New-Object System.Drawing.Point(31, 236)
+$logBox.Location = New-Object System.Drawing.Point(31, 194)
 $logBox.Size = New-Object System.Drawing.Size(408, 130)
 $logBox.Multiline = $true
 $logBox.ReadOnly = $true

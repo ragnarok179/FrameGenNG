@@ -19,11 +19,19 @@ FrameGenNG uses BeamNG's native DLSS input in DirectX 12 and adds adjustable Fra
 - An up-to-date NVIDIA driver; R580 or newer is recommended for the RTX 20/30 compatibility path
 - Enough free VRAM for Frame Generation
 
-No CUDA Toolkit, Python installation, or separate OptiScaler setup is required.
-
 FrameGenNG automatically supports the consumer GeForce RTX 20/30/40/50 naming scheme. Professional RTX A/PRO models and future RTX generations are not currently guaranteed and may be rejected instead of receiving an unvalidated profile.
 
-Frame Generation works best from a stable base frame rate. 2× is the recommended multiplier; 3× and 4× availability depends on the GPU, driver, and bundled runtime. Higher multipliers can increase latency and make interpolation artifacts more visible when the base frame rate is low.
+## Using Frame Generation
+
+Frame Generation creates additional images between the frames rendered by the game. For example, 60 base FPS at 2× can produce up to 120 displayed FPS, while 30 base FPS at 3× can produce up to 90 displayed FPS.
+
+The multiplier does not replace a good base frame rate. A game running at 5 base FPS will not feel smooth simply because 4× reports up to 20 displayed FPS. Low base FPS can still cause high latency and visible interpolation artifacts, so 2× remains the recommended setting.
+
+To configure it, open **Options → Graphics** in BeamNG, enable **DLSS**, then use the Frame Generation controls displayed directly below the DLSS settings.
+
+BeamNG's FPS counter only reports the base frames rendered by the game. Press **Alt+R** to open the NVIDIA App performance overlay and see the displayed frame rate including generated frames.
+
+For more stable results, limit the base frame rate instead of leaving it unlimited. Adjust the limit or graphics settings so normal GPU usage stays around 80–90% in the NVIDIA overlay (alt+r). This leaves some performance headroom for demanding scenes and helps keep the frame rate consistent.
 
 ## Quick installation
 
@@ -57,15 +65,8 @@ The manager checks official stable GitHub Releases when it opens. Select **Updat
 
 Expand **Details** inside the manager to inspect operation and update messages.
 
-## Languages
-
-The manager and documentation use English. The in-game FrameGenNG settings automatically follow BeamNG's selected language for English, French, German, Spanish, Italian, Portuguese, Polish, Russian, Simplified Chinese, Japanese, and Korean. English is used as the fallback.
-
 ## License and credits
 
 FrameGenNG source code and scripts are Copyright (C) 2026 `ragnarok179` and are released under the [GNU General Public License v3.0 or later](LICENSE). Redistributions and derivative works that include FrameGenNG-authored material must preserve the author attribution and original repository link stated in [NOTICE](NOTICE).
 
 FrameGenNG includes a modified GPLv3 build of [OptiScaler](https://github.com/optiscaler/OptiScaler) and an RTX 20/30 compatibility path based on [dlssg_for_sm86](https://github.com/sdli1995/dlssg_for_sm86) by `sdli1995`, including the RTX 20/SM75 adaptation credited upstream to `Coldwood1026`. NVIDIA, Streamline, NGX, and other bundled third-party components remain under their own terms. See [NOTICE](NOTICE) and [Third-party notices](THIRD_PARTY_NOTICES.md).
-
-FrameGenNG is an independent community project and is not affiliated with or endorsed by BeamNG, NVIDIA, OptiScaler, or the authors of `dlssg_for_sm86`.
-
