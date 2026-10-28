@@ -171,6 +171,7 @@ function Assert-FrameGenNGUpdateArchive {
         }
         $required = @(
             'FrameGenNG/VERSION',
+            'FrameGenNG/FrameGenNG Manager.vbs',
             'FrameGenNG/manager/FrameGenNG.Core.psm1',
             'FrameGenNG/manager/Core/FrameGenNG.Recovery.ps1',
             'FrameGenNG/manager/FrameGenNG.Update.psm1',

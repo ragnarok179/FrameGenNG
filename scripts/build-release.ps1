@@ -17,7 +17,7 @@ New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
 
 $releaseEntries = @(
     '.gitignore', 'VERSION', 'README.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md',
-    'FrameGenNG Manager.cmd', 'Install FrameGenNG.cmd', 'Repair FrameGenNG.cmd', 'Uninstall FrameGenNG.cmd',
+    'FrameGenNG Manager.vbs', 'Install FrameGenNG.cmd', 'Repair FrameGenNG.cmd', 'Uninstall FrameGenNG.cmd',
     'manager', 'payload', 'docs', 'licenses', 'source'
 )
 foreach ($entry in $releaseEntries) {

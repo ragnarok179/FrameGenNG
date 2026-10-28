@@ -201,7 +201,8 @@ try {
     $successText = if ($operation -eq 'restore') { "FrameGenNG was restored to v$stagedVersion.`r`n`r`nA safety restore point of the previous state was kept." } else { "FrameGenNG was updated to v$stagedVersion.`r`n`r`nYour Frame Generation settings were preserved." }
     Show-TransactionResult -Text $successText -Title $successTitle -Icon 'Information'
     if ([bool]$script:Request.restartManager -and -not [bool]$script:Request.silent) {
-        Start-Process -FilePath (Join-Path $packageRoot 'FrameGenNG Manager.cmd')
+        $managerLauncher = Join-Path $packageRoot 'FrameGenNG Manager.vbs'
+        Start-Process -FilePath 'wscript.exe' -ArgumentList ('"{0}"' -f $managerLauncher.Replace('"', '""'))
     }
     exit 0
 } catch {

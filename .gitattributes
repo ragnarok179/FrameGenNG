@@ -10,6 +10,7 @@
 *.patch text eol=lf
 *.ini text eol=lf
 *.cmd text eol=crlf
+*.vbs text eol=crlf
 
 *.dll binary
 *.zip binary

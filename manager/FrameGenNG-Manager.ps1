@@ -86,10 +86,15 @@ $colors = @{
     Danger = [System.Drawing.Color]::FromArgb(192, 0, 0)
 }
 
+$collapsedFormHeight = 300
+$expandedFormHeight = 440
+$collapsedFooterTop = 244
+$expandedFooterTop = 384
+
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "FrameGenNG"
 $form.StartPosition = 'CenterScreen'
-$form.ClientSize = New-Object System.Drawing.Size(470, 300)
+$form.ClientSize = New-Object System.Drawing.Size(470, $collapsedFormHeight)
 $form.BackColor = $colors.Window
 $form.ForeColor = $colors.Text
 $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
@@ -142,10 +147,11 @@ $form.Controls.Add($updateButton)
 
 $restorePointsButton = New-FrameGenNGButton -Text 'Restore points…' -X 31 -Y 196 -Width 130 -Height 28 -Colors $colors
 $diagnosticButton = New-FrameGenNGButton -Text 'Diagnostics…' -X 169 -Y 196 -Width 112 -Height 28 -Colors $colors
-$form.Controls.AddRange(@($restorePointsButton, $diagnosticButton))
+$detailsButton = New-FrameGenNGButton -Text 'Details ▸' -X 289 -Y 196 -Width 70 -Height 28 -Colors $colors
+$form.Controls.AddRange(@($restorePointsButton, $diagnosticButton, $detailsButton))
 
 $footer = New-Object System.Windows.Forms.Panel
-$footer.Location = New-Object System.Drawing.Point(0, 244)
+$footer.Location = New-Object System.Drawing.Point(0, $collapsedFooterTop)
 $footer.Size = New-Object System.Drawing.Size(470, 56)
 $footer.BackColor = [System.Drawing.SystemColors]::Control
 $form.Controls.Add($footer)
@@ -166,16 +172,40 @@ $userPathBox = New-Object System.Windows.Forms.TextBox
 $userPathBox.Visible = $false
 
 $logBox = New-Object System.Windows.Forms.TextBox
+$logBox.Location = New-Object System.Drawing.Point(31, 236)
+$logBox.Size = New-Object System.Drawing.Size(408, 130)
 $logBox.Multiline = $true
 $logBox.ReadOnly = $true
 $logBox.Visible = $false
-$logBox.Text = 'Ready.'
+$logBox.ScrollBars = 'Vertical'
+$logBox.BorderStyle = 'FixedSingle'
+$logBox.BackColor = [System.Drawing.SystemColors]::Window
+$logBox.ForeColor = $colors.Text
+$logBox.Font = New-Object System.Drawing.Font('Consolas', 8.5)
+$form.Controls.Add($logBox)
 
 $script:resolvedGameRoot = $null
 $script:resolvedUserRoot = $null
 $script:updateInfo = $null
 $script:updateJob = $null
 $script:updateCheckWasManual = $false
+$script:detailsExpanded = $false
+
+function Set-DetailsExpanded {
+    param([Parameter(Mandatory)][bool]$Expanded)
+
+    $form.SuspendLayout()
+    try {
+        $script:detailsExpanded = $Expanded
+        $logBox.Visible = $Expanded
+        $detailsButton.Text = if ($Expanded) { 'Details ▾' } else { 'Details ▸' }
+        $footer.Top = if ($Expanded) { $expandedFooterTop } else { $collapsedFooterTop }
+        $targetHeight = if ($Expanded) { $expandedFormHeight } else { $collapsedFormHeight }
+        $form.ClientSize = New-Object System.Drawing.Size(470, $targetHeight)
+    } finally {
+        $form.ResumeLayout($true)
+    }
+}
 
 function Set-BusyState {
     param([bool]$Busy)
@@ -189,7 +219,12 @@ function Set-BusyState {
 
 function Write-ManagerLog {
     param([string]$Message)
-    $logBox.AppendText("`r`n$((Get-Date).ToString('HH:mm:ss'))  $Message")
+    $entry = "$((Get-Date).ToString('HH:mm:ss'))  $Message"
+    if ([string]::IsNullOrWhiteSpace($logBox.Text)) {
+        $logBox.Text = $entry
+    } else {
+        $logBox.AppendText("`r`n$entry")
+    }
     $logBox.SelectionStart = $logBox.TextLength
     $logBox.ScrollToCaret()
     if (-not [string]::IsNullOrWhiteSpace([string]$script:resolvedUserRoot)) {
@@ -588,6 +623,8 @@ $restorePointsButton.Add_Click({
     }
 })
 
+$detailsButton.Add_Click({ Set-DetailsExpanded -Expanded (-not $script:detailsExpanded) })
+
 $updateButton.Add_Click({
     if ($null -eq $script:updateInfo -or -not [bool]$script:updateInfo.UpdateAvailable) {
         Start-UpdateCheck -Manual $true
@@ -624,6 +661,7 @@ $updateButton.Add_Click({
 })
 
 $form.Add_Shown({
+    Write-ManagerLog -Message 'Manager ready.'
     Refresh-ManagerStatus | Out-Null
     Start-UpdateCheck -Manual $false
 })

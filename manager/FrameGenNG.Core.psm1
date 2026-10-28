@@ -104,7 +104,7 @@ function Get-FrameGenNGGameLanguage {
             $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
             if ($settings.PSObject.Properties.Name -contains 'userLanguage') {
                 $language = ([string]$settings.userLanguage).Trim().ToLowerInvariant()
-                if ($language -match '^(fr|de|es)(?:[_-]|$)') { return $Matches[1] }
+                if ($language -match '^(fr|de|es|it|pt|pl|ru|zh|ja|ko)(?:[_-]|$)') { return $Matches[1] }
             }
         } catch {
             # Invalid or unavailable language settings must never block installation.
@@ -148,6 +148,62 @@ function Get-FrameGenNGGameStrings {
             Multiplier = 'Multiplicador'
             MultiplierTooltip = 'Se recomienda 2× para obtener el mejor equilibrio entre fluidez y estabilidad.'
             Recommended = '2× — Recomendado'
+        }
+        it = @{
+            Heading = 'Generazione fotogrammi'
+            Enabled = 'Attiva generazione fotogrammi'
+            EnabledTooltip = 'Inserisce fotogrammi generati tra quelli renderizzati dal gioco.'
+            Multiplier = 'Moltiplicatore'
+            MultiplierTooltip = '2× è consigliato per il miglior equilibrio tra fluidità e stabilità.'
+            Recommended = '2× — Consigliato'
+        }
+        pt = @{
+            Heading = 'Geração de quadros'
+            Enabled = 'Ativar geração de quadros'
+            EnabledTooltip = 'Insere quadros gerados entre os quadros renderizados pelo jogo.'
+            Multiplier = 'Multiplicador'
+            MultiplierTooltip = '2× é recomendado para o melhor equilíbrio entre fluidez e estabilidade.'
+            Recommended = '2× — Recomendado'
+        }
+        pl = @{
+            Heading = 'Generowanie klatek'
+            Enabled = 'Włącz generowanie klatek'
+            EnabledTooltip = 'Wstawia wygenerowane klatki pomiędzy klatki renderowane przez grę.'
+            Multiplier = 'Mnożnik'
+            MultiplierTooltip = '2× jest zalecane dla najlepszego balansu płynności i stabilności.'
+            Recommended = '2× — Zalecane'
+        }
+        ru = @{
+            Heading = 'Генерация кадров'
+            Enabled = 'Включить генерацию кадров'
+            EnabledTooltip = 'Вставляет сгенерированные кадры между кадрами, отрисованными игрой.'
+            Multiplier = 'Множитель'
+            MultiplierTooltip = 'Для оптимального баланса плавности и стабильности рекомендуется 2×.'
+            Recommended = '2× — Рекомендуется'
+        }
+        zh = @{
+            Heading = '帧生成'
+            Enabled = '启用帧生成'
+            EnabledTooltip = '在游戏渲染的帧之间插入生成帧。'
+            Multiplier = '倍数'
+            MultiplierTooltip = '建议使用 2×，以获得流畅度和稳定性的最佳平衡。'
+            Recommended = '2× — 推荐'
+        }
+        ja = @{
+            Heading = 'フレーム生成'
+            Enabled = 'フレーム生成を有効にする'
+            EnabledTooltip = 'ゲームがレンダリングしたフレームの間に生成フレームを挿入します。'
+            Multiplier = '倍率'
+            MultiplierTooltip = '滑らかさと安定性のバランスには 2× を推奨します。'
+            Recommended = '2× — 推奨'
+        }
+        ko = @{
+            Heading = '프레임 생성'
+            Enabled = '프레임 생성 활성화'
+            EnabledTooltip = '게임에서 렌더링한 프레임 사이에 생성된 프레임을 삽입합니다.'
+            Multiplier = '배율'
+            MultiplierTooltip = '부드러움과 안정성의 균형을 위해 2×를 권장합니다.'
+            Recommended = '2× — 권장'
         }
     }
     return $strings[(Get-FrameGenNGGameLanguage -UserRoot $UserRoot)]

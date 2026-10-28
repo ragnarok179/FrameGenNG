@@ -1,27 +1,48 @@
 name: Publish FrameGenNG release
 
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version from the VERSION file, for example 0.1.0
+        required: true
+        type: string
 
-permissions:
-  contents: write
+permissions: {}
+
+concurrency:
+  group: framegenng-release-${{ inputs.version }}
+  cancel-in-progress: false
 
 jobs:
-  release:
+  build:
     runs-on: windows-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.release_metadata.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
-      - name: Verify tag and package version
+      - name: Verify release source and version
+        id: release_metadata
         shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
         run: |
-          $version = (Get-Content -LiteralPath ./VERSION -Raw).Trim()
-          $expectedTag = "v$version"
-          if ($env:GITHUB_REF_NAME -ne $expectedTag) {
-            throw "Tag $env:GITHUB_REF_NAME does not match VERSION ($expectedTag)."
+          if ($env:GITHUB_REF -ne 'refs/heads/main') {
+            throw "Releases must be created from main, not $env:GITHUB_REF."
           }
+
+          $version = (Get-Content -LiteralPath ./VERSION -Raw).Trim()
+          if ($env:RELEASE_VERSION -ne $version) {
+            throw "Requested version $env:RELEASE_VERSION does not match VERSION ($version)."
+          }
+
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Build release package
         shell: pwsh
@@ -29,18 +50,51 @@ jobs:
           ./scripts/build-release.ps1
           git diff --exit-code -- payload/manifest.json
 
+      - name: Store release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: FrameGenNG-v${{ steps.release_metadata.outputs.version }}
+          path: |
+            dist/FrameGenNG-v${{ steps.release_metadata.outputs.version }}.zip
+            dist/FrameGenNG-v${{ steps.release_metadata.outputs.version }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: windows-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Retrieve release assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: FrameGenNG-v${{ needs.build.outputs.version }}
+          path: dist
+
       - name: Publish GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
         run: |
-          $version = (Get-Content -LiteralPath ./VERSION -Raw).Trim()
+          $zipPath = "dist/FrameGenNG-v$env:RELEASE_VERSION.zip"
+          $checksumPath = "$zipPath.sha256"
+          $checksumLine = (Get-Content -LiteralPath $checksumPath -Raw).Trim()
+          if ($checksumLine -notmatch '^([0-9a-f]{64})\s+FrameGenNG-v[^\s]+\.zip$') {
+            throw "Invalid SHA-256 file: $checksumPath"
+          }
+
+          $checksum = $Matches[1]
+          $releaseNotes = "## SHA-256`n`n``$checksum`` — ``FrameGenNG-v$env:RELEASE_VERSION.zip``"
           $arguments = @(
-            'release', 'create', $env:GITHUB_REF_NAME,
-            "dist/FrameGenNG-v$version.zip",
-            "dist/FrameGenNG-v$version.zip.sha256",
-            '--title', "FrameGenNG v$version",
-            '--generate-notes',
-            '--verify-tag'
+            'release', 'create', "v$env:RELEASE_VERSION",
+            $zipPath,
+            $checksumPath,
+            '--target', $env:GITHUB_SHA,
+            '--title', "FrameGenNG v$env:RELEASE_VERSION",
+            '--notes', $releaseNotes,
+            '--generate-notes'
           )
           & gh @arguments

@@ -24,63 +24,35 @@ No CUDA Toolkit, Python installation, or separate OptiScaler setup is required.
 
 1. Close BeamNG.drive.
 2. Extract the `FrameGenNG` folder directly into the BeamNG.drive root folder, next to `Bin64`.
-3. Open `FrameGenNG Manager.cmd`.
+3. Open `FrameGenNG Manager.vbs`.
 4. Select **Install**.
 5. Start BeamNG in DirectX 12, enable DLSS, then configure Frame Generation below the DLSS settings.
 
 BeamNG will warn about `dxgi.dll` and, on RTX 20/30, `d3d12.dll`. This is expected: these proxy libraries load the FrameGenNG graphics layer. Select **Cancel** in that warning if you do not want BeamNG to show it again.
 
-## Important notes
-
-- Proxy DLLs can trigger heuristic antivirus or SmartScreen warnings. Download FrameGenNG only from this repository's GitHub Releases page and verify the published SHA-256 checksum.
-- Frame Generation uses additional VRAM. If frame times become unstable, reduce texture quality or output resolution and close other GPU-heavy applications.
-- Do not combine FrameGenNG with another `dxgi.dll` or `d3d12.dll` proxy unless that combination has been explicitly tested.
-- Avoid using FrameGenNG in BeamMP or any anti-cheat-protected session until that environment has explicitly confirmed compatibility.
-
 ## Safe removal and recovery
 
-- The complete payload is verified against its SHA-256 manifest before installation.
-- Existing BeamNG user-interface overrides and the HDR output shader are backed up before installation.
-- Installation stops instead of overwriting another `dxgi.dll` or `d3d12.dll` graphics proxy.
-- Uninstall restores the original files instead of only deleting the added DLLs.
-- Install, Repair, and Uninstall invalidate BeamNG's rendering shader cache after changing the HDR encoder, preventing stale color-space code from being reused.
-- BeamNG settings added by FrameGenNG are removed without overwriting unrelated changes made later.
-- If an installed file was modified after installation, a recovery copy is preserved before restoration.
-- Backups are stored under `FrameGenNG\backups` in the BeamNG user folder.
-- The manager also creates durable restore points before installation, repair, update, uninstall, and restore operations. Open **Restore Points** to create a manual point or return to an earlier compatible FrameGenNG state.
-- The five newest automatic restore points are retained. Manual points are never removed automatically; up to ten can be kept and deleted from the manager.
-- The installation state is stored twice, so emergency uninstall still works if the primary state file is missing or damaged.
-- **Repair** preserves the selected FG state and multiplier, performs a clean restoration, then rebuilds the integration from the current BeamNG files.
+The manager backs up every BeamNG file it changes. **Uninstall** restores the original files and removes the FrameGenNG settings without touching unrelated changes. **Repair** rebuilds the current integration while preserving the selected Frame Generation state and multiplier.
 
-Do not manually delete the backup folder before uninstalling FrameGenNG.
-
-Repair and restore serve different purposes: **Repair** rebuilds the current version against the current BeamNG files, while **Restore Points** returns the package, install state, profile, and Frame Generation settings to an earlier snapshot. A restore point is rejected when it was created for a different BeamNG executable, preventing an old integration from being forced onto an updated game.
+Automatic restore points are created before important operations. Open **Restore Points** to create a manual point or return to an earlier compatible FrameGenNG state. Backups are stored under `FrameGenNG\backups` in the BeamNG user folder; do not delete them manually before uninstalling.
 
 ## Diagnostics
 
-The **Diagnostics** window always provides the standard installation integrity scan. **Advanced diagnostic logging** is optional and disabled by default. When enabled, it records detailed manager actions and errors without adding per-frame logging or affecting driving performance.
-
-Use **Export diagnostic bundle** to create a support ZIP containing a structured report, recent BeamNG and FrameGenNG log excerpts when available, installation state, transaction logs, GPU/driver information, and the payload manifest. The bundle is saved under `FrameGenNG\diagnostics\exports` in the BeamNG user folder; only the five newest exports are retained. It can contain local folder paths and user names from logs, so review it before sharing.
+Open **Diagnostics** to check the installation. Advanced logging is optional and disabled by default. **Export diagnostic bundle** creates a support ZIP under `FrameGenNG\diagnostics\exports` in the BeamNG user folder; review it before sharing because logs can contain local paths.
 
 ## After a BeamNG update
 
-Open the FrameGenNG Manager before starting the game. The manager fingerprints the BeamNG executable and the integration sources it modifies. If they changed, it reports **BeamNG update detected** and asks for **Repair**.
-
-Repair removes the old integration safely and rebuilds it from the updated game files. If the update placed a new file where FrameGenNG previously installed one, that new game file is preserved and copied to recovery storage instead of being overwritten with an obsolete backup. If the updated BeamNG layout is no longer compatible, installation stops and leaves the game restored rather than forcing an unsafe patch.
+Open the FrameGenNG Manager after updating BeamNG. If it reports **BeamNG update detected**, select **Repair**. FrameGenNG rebuilds the integration from the updated game files and stops safely if that BeamNG version is not yet compatible.
 
 ## Automatic updates
 
-The manager checks the official GitHub Releases feed when it opens. If a compatible update is available, select **Update to v…** and confirm the operation.
+The manager checks official stable GitHub Releases when it opens. Select **Update to v…** to download, verify, and install an available update. Settings and the previous working package are preserved so the updater can roll back automatically if installation fails. Drafts and prereleases are ignored.
 
-The updater downloads the release ZIP and its SHA-256 file, verifies the archive, every payload file, the embedded version, and the manifest, preserves the current Frame Generation state and multiplier, restores the original game files, backs up the complete installed mod package, replaces it, then installs the new version. If installation fails, it automatically restores the previous package and game integration whenever that version is still compatible with the current BeamNG installation.
-
-FrameGenNG only follows normal published releases and ignores drafts and prereleases. No update is installed without confirmation, and no GitHub account or access token is required.
-
-See [Compatibility](docs/COMPATIBILITY.md), [Troubleshooting](docs/TROUBLESHOOTING.md), and [Architecture](docs/ARCHITECTURE.md) for details.
+Expand **Details** inside the manager to inspect operation and update messages.
 
 ## Languages
 
-The repository, documentation, logs, and command-line output use English. The in-game FrameGenNG settings automatically follow BeamNG's selected language for English, French, German, and Spanish, with English as the fallback.
+The manager and documentation use English. The in-game FrameGenNG settings automatically follow BeamNG's selected language for English, French, German, Spanish, Italian, Portuguese, Polish, Russian, Simplified Chinese, Japanese, and Korean. English is used as the fallback.
 
 ## License and credits
 
