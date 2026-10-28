@@ -28,8 +28,8 @@
     },
     {
       "path": "Bin64/FGNGEngine.ini",
-      "size": 467,
-      "sha256": "56b0171903988b2511453f6bd1cc3516498c948742fa21baf4902013e624ac5b"
+      "size": 436,
+      "sha256": "c832bfef0579871735d66f306a253cd7cae77181f4dfc084e1bfbbcfa500cbfb"
     },
     {
       "path": "Bin64/FGNGEngine/backend/sm86_backend.dll",
@@ -48,8 +48,8 @@
     },
     {
       "path": "Bin64/FrameGenNG.ini",
-      "size": 1191,
-      "sha256": "d0643037cdeeb3454b358fc6f4b0645f30aa5f18dea82826cf7083ddfbcf5a48"
+      "size": 1115,
+      "sha256": "0c2a36f4e7fd20cc3b87609d5c501e6260df3d2d0a75def5b63b89a2d8107bfc"
     },
     {
       "path": "Bin64/FrameGenNG/streamline/nvngx_dlssg.dll",
