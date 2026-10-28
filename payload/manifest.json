@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "packageVersion": "1.01",
+  "packageVersion": "1.02",
   "profiles": {
     "NativeRTX": [
       "Bin64/dxgi.dll",

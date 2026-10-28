@@ -66,20 +66,22 @@ function Resolve-BeamNGUserRoot {
         throw "BeamNG configuration not found: $LauncherIni. Run the BeamNG launcher at least once."
     }
 
-    $configured = $null
+    $configuredUserFolder = $null
     foreach ($line in Get-Content -LiteralPath $LauncherIni) {
-        if ($line -match '^\s*userFolder\s*=\s*(.+?)\s*$') {
-            $configured = $Matches[1].Trim().Trim('"')
+        if ($line -match '^\s*userFolder\s*=\s*(.*?)\s*$') {
+            $configuredUserFolder = $Matches[1].Trim().Trim('"')
             break
         }
     }
-    if ([string]::IsNullOrWhiteSpace($configured)) {
-        throw "The userFolder key is missing from $LauncherIni"
-    }
 
-    $base = [Environment]::ExpandEnvironmentVariables($configured)
-    if (-not [System.IO.Path]::IsPathRooted($base)) {
-        $base = Join-Path (Split-Path -Parent $LauncherIni) $base
+    $launcherRoot = Split-Path -Parent $LauncherIni
+    if ([string]::IsNullOrWhiteSpace($configuredUserFolder)) {
+        $base = Join-Path $launcherRoot 'BeamNG.drive\current'
+    } else {
+        $base = [Environment]::ExpandEnvironmentVariables($configuredUserFolder)
+        if (-not [System.IO.Path]::IsPathRooted($base)) {
+            $base = Join-Path $launcherRoot $base
+        }
     }
     $base = [System.IO.Path]::GetFullPath($base).TrimEnd('\')
 
