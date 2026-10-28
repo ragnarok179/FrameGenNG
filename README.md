@@ -34,7 +34,7 @@ For more stable results, limit the base frame rate instead of leaving it unlimit
 ## Quick installation
 
 1. Close BeamNG.drive.
-2. Extract the `FrameGenNG` folder directly into the BeamNG.drive root folder, next to `Bin64`.
+2. Extract the `FrameGenNG` folder directly into the BeamNG root folder. (You can find it through Steam: Library → Right-click BeamNG.drive → Manage → Browse local files.)
 3. Open `FrameGenNG Manager.vbs`.
 4. Select **Install**.
 5. Start BeamNG in DirectX 12, enable DLSS, then configure Frame Generation below the DLSS settings.
