@@ -12,10 +12,21 @@ The `framegenng-renderer.patch` file contains the FrameGenNG changes applied to 
 - reading FrameGenNG settings from the BeamNG user folder;
 - dynamic enable and multiplier selection;
 - presentation-path adaptation for the Frame Generation swapchain;
+- automatic SDR/HDR presentation switching based on Windows HDR and BeamNG's requested output;
 - BeamNG shutdown signaling and targeted avoidance of unsafe late NGX calls;
 - swapchain lifetime fixes identified during prototype testing.
 
 ## Rebuilding
+
+### Automated local test build
+
+From a development checkout of the repository, open `Build FrameGenNG Test Package.cmd`. The build downloads and caches the pinned upstream source, applies the FrameGenNG naming normalization and renderer patch, compiles the Release x64 DLL, updates the payload manifest, and creates the final ZIP and SHA-256 file under `dist`. The development launcher and build script are intentionally not included in the distributed user ZIP.
+
+The first build requires Git for Windows, internet access, and Visual Studio 2022 or Build Tools 2022 with the C++ workload. Downloaded sources and intermediate files remain under `.build-cache`, which is ignored by Git. Later builds reuse this cache. Use `scripts\build-native-release.ps1 -RefreshSource` to recreate it.
+
+The build updates `payload/Bin64/dxgi.dll` and `payload/manifest.json` with the exact native binary placed in the test package. Commit those files only after the packaged build has been validated.
+
+### Manual rebuild
 
 ```powershell
 git clone --recursive https://github.com/optiscaler/OptiScaler.git FrameGenNGEngine-source

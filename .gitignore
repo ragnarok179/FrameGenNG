@@ -1,5 +1,6 @@
 /dist/
 /state/
+/.build-cache/
 *.log
 *.tmp
 Thumbs.db

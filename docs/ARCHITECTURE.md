@@ -27,7 +27,7 @@ The installer adds two controls below the DLSS settings:
 
 The controls are hidden when DLSS is not selected. The DLL reads the settings at most twice per second. Its separate overlay, shortcuts, splash screen, debugging UI, alternative upscalers, plugin loading, sharpening, output scaling, and magnifier are disabled in the production configuration.
 
-A small, version-checked shader patch can route BeamNG's scRGB output mode through the game's existing HDR10 encoder when the optional FrameGenNG HDR10 bridge is enabled. This keeps the encoded pixels and the advertised DXGI color space aligned. The distributed configuration leaves the bridge disabled for SDR safety. Installation stops on an unknown shader layout instead of applying an unverified text replacement.
+A small, version-checked shader patch can route BeamNG's scRGB output mode through the game's existing HDR10 encoder. The rendering bridge activates this path only when Windows HDR is active and BeamNG requests its HDR output. It otherwise preserves the normal SDR swapchain, including when Windows HDR is active but BeamNG HDR is disabled. This keeps the encoded pixels, swapchain format, and advertised DXGI color space aligned across SDR/HDR changes. Installation stops on an unknown shader layout instead of applying an unverified text replacement.
 
 A GELua extension writes a signal during `onPreExit`. The DLL observes it before D3D12 teardown and avoids unsafe late NGX shutdown calls.
 

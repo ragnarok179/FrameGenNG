@@ -6,9 +6,9 @@ Close the game with Alt+F4, open the manager, and select **Repair**. Confirm tha
 
 ## Incorrect, washed-out, or oversaturated colors
 
-FrameGenNG ships with the SDR-safe presentation path. Do not enable `ForceHDR` or `UseHDR10` in `Bin64\FrameGenNG.ini` while Windows HDR is disabled or the selected monitor does not support HDR; doing so can present HDR10-encoded pixels through an SDR color space and cause extreme saturation.
+FrameGenNG selects the presentation path automatically. SDR is preserved unless Windows HDR is active and BeamNG requests HDR at the same time. Do not manually change `ForceHDR`, `UseHDR10`, or `SkipColorSpace` in `Bin64\FrameGenNG.ini`.
 
-When Windows HDR is active, both options may be enabled together to use the HDR10 bridge. Fully close BeamNG before changing them. If the image remains incorrect, restore both options to `false`, restart the game, and export a diagnostic bundle.
+Fully close and restart BeamNG after changing Windows HDR. If the image remains incorrect, select **Repair** in the manager to restore the production configuration and rebuild BeamNG's disposable rendering shader cache. Export a diagnostic bundle if the problem continues.
 
 ## Frame Generation does not activate
 

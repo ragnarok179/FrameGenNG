@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "packageVersion": "1.03",
+  "packageVersion": "1.04",
   "profiles": {
     "NativeRTX": [
       "Bin64/dxgi.dll",
@@ -23,8 +23,8 @@
     },
     {
       "path": "Bin64/dxgi.dll",
-      "size": 26671104,
-      "sha256": "32c56712b64d1db28b1da7e49a35f3a2e14026eb4fdf533aafcdaa51e45b6f90"
+      "size": 26669568,
+      "sha256": "26e8dc169a618610d02c1a4ef146318b7f9672f145c5aa2c086ec85be586a1af"
     },
     {
       "path": "Bin64/FGNGEngine.ini",
@@ -48,8 +48,8 @@
     },
     {
       "path": "Bin64/FrameGenNG.ini",
-      "size": 1195,
-      "sha256": "7cca29681417d79eb0fa801e0735792219801b50f608b7f5d24d427817dc6100"
+      "size": 1216,
+      "sha256": "948485f5e04a16aeac8413bdabe219475e15d50e7341b6b89ea67d48c38471ab"
     },
     {
       "path": "Bin64/FrameGenNG/streamline/nvngx_dlssg.dll",

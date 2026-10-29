@@ -24,8 +24,29 @@ index d171868..1525936 100644
 -</Project>
 \ No newline at end of file
 +</Project>
+diff --git a/FrameGenNGEngine/State.h b/FrameGenNGEngine/State.h
+index 7ff5af6..647ed7f 100644
+--- a/FrameGenNGEngine/State.h
++++ b/FrameGenNGEngine/State.h
+@@ -9,6 +9,7 @@
+ #include <inputs/FG/Streamline_Inputs_Sl1_Dx12.h>
+ 
+ #include <chrono>
++#include <atomic>
+ #include <set>
+ #include <deque>
+ #include <mutex>
+@@ -416,6 +417,8 @@ class State
+     std::vector<IUnknown*> scBuffers;
+     OutputColorSpace outputColorSpace {};
+     bool hdrOutputActive = false;
++    std::atomic_bool beamNgHdr10BridgeActive { false };
++    std::atomic<HWND> beamNgPresentationWindow { nullptr };
+ 
+     std::optional<ApiUpscalerInput> setInputApiName;
+     ApiUpscalerInput currentInputApiName;
 diff --git a/FrameGenNGEngine/dllmain.cpp b/FrameGenNGEngine/dllmain.cpp
-index c738e4e..95fa828 100644
+index c738e4e..5326077 100644
 --- a/FrameGenNGEngine/dllmain.cpp
 +++ b/FrameGenNGEngine/dllmain.cpp
 @@ -1939,21 +1939,22 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
@@ -64,7 +85,7 @@ index c738e4e..95fa828 100644
  
          spdlog::info("");
 diff --git a/FrameGenNGEngine/framegen/dlssg/DLSSG_Dx12.cpp b/FrameGenNGEngine/framegen/dlssg/DLSSG_Dx12.cpp
-index 5d419c6..d248034 100644
+index 5d419c6..0d0dfbf 100644
 --- a/FrameGenNGEngine/framegen/dlssg/DLSSG_Dx12.cpp
 +++ b/FrameGenNGEngine/framegen/dlssg/DLSSG_Dx12.cpp
 @@ -2,6 +2,8 @@
@@ -76,20 +97,23 @@ index 5d419c6..d248034 100644
  #include <hudfix/Hudfix_Dx12.h>
  #include <hudfix/Hudfix_Dx11.h>
  
-@@ -12,6 +14,39 @@
+@@ -9,9 +11,42 @@
+ #include <resource_tracking/ResTrack_dx12.h>
+ 
+ #include <hooks/DxgiFactory_Hooks.h>
++#include <misc/BeamNGHdrBridge.h>
  
  #include <magic_enum.hpp>
  
 +static void ApplyForcedHdr10ColorSpace(IDXGISwapChain* swapChain)
 +{
-+    if (swapChain == nullptr || !Config::Instance()->ForceHDR.value_or_default() ||
-+        !Config::Instance()->UseHDR10.value_or_default())
++    if (swapChain == nullptr || !BeamNGHdrBridge::IsActive())
 +        return;
 +
 +    IDXGISwapChain3* swapChain3 = nullptr;
 +    if (FAILED(swapChain->QueryInterface(IID_PPV_ARGS(&swapChain3))) || swapChain3 == nullptr)
 +    {
-+        LOG_ERROR("ForceHDR10: DLSSG swapchain does not expose IDXGISwapChain3");
++        LOG_ERROR("BeamNG HDR bridge: FG swapchain does not expose IDXGISwapChain3");
 +        return;
 +    }
 +
@@ -98,7 +122,7 @@ index 5d419c6..d248034 100644
 +    const auto supportResult = swapChain3->CheckColorSpaceSupport(hdr10ColorSpace, &support);
 +    if (FAILED(supportResult) || (support & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT) == 0)
 +    {
-+        LOG_ERROR("ForceHDR10: DLSSG swapchain does not support HDR10 color space, result: {:X}, flags: {:X}",
++        LOG_ERROR("BeamNG HDR bridge: FG swapchain does not support HDR10 color space, result: {:X}, flags: {:X}",
 +                  (UINT) supportResult, support);
 +        swapChain3->Release();
 +        return;
@@ -106,9 +130,9 @@ index 5d419c6..d248034 100644
 +
 +    const auto setResult = swapChain3->SetColorSpace1(hdr10ColorSpace);
 +    if (FAILED(setResult))
-+        LOG_ERROR("ForceHDR10: failed to set DLSSG swapchain HDR10 color space: {:X}", (UINT) setResult);
++        LOG_ERROR("BeamNG HDR bridge: failed to set FG swapchain HDR10 color space: {:X}", (UINT) setResult);
 +    else
-+        LOG_INFO("ForceHDR10: DLSSG swapchain color space set to HDR10/BT.2100");
++        LOG_DEBUG("BeamNG HDR bridge: FG swapchain color space set to HDR10/BT.2100");
 +
 +    swapChain3->Release();
 +}
@@ -147,50 +171,58 @@ index 31fe0f9..af4a557 100644
  #include <detours/detours.h>
  
 diff --git a/FrameGenNGEngine/hooks/DxgiFactory_WrappedCalls.cpp b/FrameGenNGEngine/hooks/DxgiFactory_WrappedCalls.cpp
-index 620960d..86c436e 100644
+index 620960d..98cd55e 100644
 --- a/FrameGenNGEngine/hooks/DxgiFactory_WrappedCalls.cpp
 +++ b/FrameGenNGEngine/hooks/DxgiFactory_WrappedCalls.cpp
-@@ -29,6 +29,66 @@ static bool ShouldCreateDx11wDx12Swapchain()
+@@ -9,6 +9,7 @@
+ #include <spoofing/Dxgi_Spoofing.h>
+ 
+ #include <misc/HiddenWindow.h>
++#include <misc/BeamNGHdrBridge.h>
+ #include <with_dx12/with_dx12.h>
+ #include <wrapped/wrapped_swapchain.h>
+ #include <with_dx12/dx11_with_dx12_sc.h>
+@@ -29,6 +30,67 @@ static bool ShouldCreateDx11wDx12Swapchain()
             State::Instance().activeFgInput != FGInput::NvngxFG;
  }
  
-+static void ApplyForcedHdr10Format(DXGI_SWAP_CHAIN_DESC& desc)
++static bool PrepareBeamNGHdrBridge(DXGI_SWAP_CHAIN_DESC& desc, bool windowsHdrActive)
 +{
-+    if (desc.BufferDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
-+    {
-+        LOG_INFO("BeamNG HDR probe: factory observed FP16 scRGB swapchain");
-+        if (Config::Instance()->ForceHDR.value_or_default() && Config::Instance()->UseHDR10.value_or_default())
-+        {
-+            LOG_INFO("ForceHDR10: replacing FP16 scRGB swapchain format before creation");
-+            desc.BufferDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
-+        }
-+    }
++    const bool active =
++        BeamNGHdrBridge::ResolveForFormat(desc.BufferDesc.Format, false, windowsHdrActive);
++    desc.BufferDesc.Format = BeamNGHdrBridge::TranslateFormat(desc.BufferDesc.Format, active);
++    return active;
 +}
 +
-+static void ApplyForcedHdr10Format(DXGI_SWAP_CHAIN_DESC1& desc)
++static bool PrepareBeamNGHdrBridge(DXGI_SWAP_CHAIN_DESC1& desc, bool windowsHdrActive)
 +{
-+    if (desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
-+    {
-+        LOG_INFO("BeamNG HDR probe: factory observed FP16 scRGB swapchain1");
-+        if (Config::Instance()->ForceHDR.value_or_default() && Config::Instance()->UseHDR10.value_or_default())
-+        {
-+            LOG_INFO("ForceHDR10: replacing FP16 scRGB swapchain format before creation");
-+            desc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
-+        }
-+    }
++    const bool active = BeamNGHdrBridge::ResolveForFormat(desc.Format, false, windowsHdrActive);
++    desc.Format = BeamNGHdrBridge::TranslateFormat(desc.Format, active);
++    return active;
 +}
 +
-+static void ApplyForcedHdr10ColorSpace(IDXGISwapChain* swapChain, DXGI_FORMAT format)
++static bool IsD3D12CommandQueue(IUnknown* device)
 +{
-+    if (swapChain == nullptr || format != DXGI_FORMAT_R10G10B10A2_UNORM ||
-+        !Config::Instance()->ForceHDR.value_or_default() ||
-+        !Config::Instance()->UseHDR10.value_or_default())
++    if (device == nullptr)
++        return false;
++
++    ID3D12CommandQueue* commandQueue = nullptr;
++    const bool isCommandQueue = SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&commandQueue)));
++    if (commandQueue != nullptr)
++        commandQueue->Release();
++
++    return isCommandQueue;
++}
++
++static void ApplyBeamNGHdrBridgeColorSpace(IDXGISwapChain* swapChain, bool active)
++{
++    if (swapChain == nullptr || !active)
 +        return;
 +
 +    IDXGISwapChain3* swapChain3 = nullptr;
 +    if (FAILED(swapChain->QueryInterface(IID_PPV_ARGS(&swapChain3))) || swapChain3 == nullptr)
 +    {
-+        LOG_ERROR("ForceHDR10: created swapchain does not expose IDXGISwapChain3");
++        LOG_ERROR("BeamNG HDR bridge: created swapchain does not expose IDXGISwapChain3");
 +        return;
 +    }
 +
@@ -199,7 +231,7 @@ index 620960d..86c436e 100644
 +    const auto supportResult = swapChain3->CheckColorSpaceSupport(hdr10ColorSpace, &support);
 +    if (FAILED(supportResult) || (support & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT) == 0)
 +    {
-+        LOG_ERROR("ForceHDR10: HDR10 present is unsupported, result: {:X}, flags: {:X}",
++        LOG_ERROR("BeamNG HDR bridge: HDR10 present is unsupported, result: {:X}, flags: {:X}",
 +                  (UINT) supportResult, support);
 +        swapChain3->Release();
 +        return;
@@ -207,9 +239,10 @@ index 620960d..86c436e 100644
 +
 +    const auto setResult = swapChain3->SetColorSpace1(hdr10ColorSpace);
 +    if (FAILED(setResult))
-+        LOG_ERROR("ForceHDR10: failed to set created swapchain to HDR10/BT.2100: {:X}", (UINT) setResult);
++        LOG_ERROR("BeamNG HDR bridge: failed to set created swapchain to HDR10/BT.2100: {:X}",
++                  (UINT) setResult);
 +    else
-+        LOG_INFO("ForceHDR10: created R10 swapchain is now HDR10/BT.2100");
++        LOG_DEBUG("BeamNG HDR bridge: created R10 swapchain is now HDR10/BT.2100");
 +
 +    swapChain3->Release();
 +}
@@ -217,61 +250,136 @@ index 620960d..86c436e 100644
  static bool PrepareDx12InteropDesc(DXGI_SWAP_CHAIN_DESC& desc)
  {
      if (desc.SampleDesc.Count > 1)
-@@ -83,6 +143,8 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChain(IDXGIFactory* realFactory, Wrap
-     if (pDesc != nullptr)
-         memcpy(&localDesc, pDesc, sizeof(DXGI_SWAP_CHAIN_DESC));
+@@ -121,6 +183,18 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChain(IDXGIFactory* realFactory, Wrap
+         return res;
+     }
  
-+    ApplyForcedHdr10Format(localDesc);
++    const bool isInternalOrNonD3D12 = _skipFGSwapChainCreation || !IsD3D12CommandQueue(pDevice);
++    const auto presentationClaim =
++        BeamNGHdrBridge::ClaimPresentationWindow(localDesc.OutputWindow, isInternalOrNonD3D12);
++    const bool ownsHdrBridgeState = presentationClaim.ownsState;
++    const bool previousHdrBridgeState = BeamNGHdrBridge::IsActive();
++    const bool windowsHdrActive =
++        ownsHdrBridgeState && BeamNGHdrBridge::IsWindowsHdrActive(realFactory, localDesc.OutputWindow);
++    const bool hdrBridgeActive =
++        ownsHdrBridgeState ? PrepareBeamNGHdrBridge(localDesc, windowsHdrActive) : false;
++    if (ownsHdrBridgeState)
++        BeamNGHdrBridge::Publish(hdrBridgeActive);
 +
-     if (State::Instance().vulkanCreatingSC)
-     {
-         LOG_WARN("Vulkan is creating swapchain!");
-@@ -223,6 +285,7 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChain(IDXGIFactory* realFactory, Wrap
+     LOG_DEBUG("Width: {}, Height: {}, Format: {}, Count: {}, Flags: {:X}, Hwnd: {:X}, Windowed: {}, SkipWrapping: {}",
+               localDesc.BufferDesc.Width, localDesc.BufferDesc.Height, (UINT) localDesc.BufferDesc.Format,
+               localDesc.BufferCount, localDesc.Flags, (SIZE_T) localDesc.OutputWindow, localDesc.Windowed,
+@@ -223,6 +297,7 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChain(IDXGIFactory* realFactory, Wrap
  
              if (FGSCResult == S_OK)
              {
-+                ApplyForcedHdr10ColorSpace(*ppSwapChain, localDesc.BufferDesc.Format);
++                ApplyBeamNGHdrBridgeColorSpace(*ppSwapChain, hdrBridgeActive);
                  State::Instance().currentSwapchainDesc = localDesc;
                  return FGSCResult;
              }
-@@ -369,6 +432,7 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChain(IDXGIFactory* realFactory, Wrap
+@@ -369,6 +444,7 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChain(IDXGIFactory* realFactory, Wrap
  
          if (result == S_OK)
          {
-+            ApplyForcedHdr10ColorSpace(*ppSwapChain, localDesc.BufferDesc.Format);
++            ApplyBeamNGHdrBridgeColorSpace(*ppSwapChain, hdrBridgeActive);
              State::Instance().currentSwapchainDesc = localDesc;
              State::Instance().swapchainInteropApi = SwapchainInteropApi::None;
  
-@@ -434,6 +498,8 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChainForHwnd(IDXGIFactory2* realFacto
-     if (pDesc != nullptr)
-         memcpy(&localDesc, pDesc, sizeof(DXGI_SWAP_CHAIN_DESC1));
+@@ -396,7 +472,8 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChain(IDXGIFactory* realFactory, Wrap
+             if ((*ppSwapChain)->QueryInterface(IID_PPV_ARGS(&wrapped)) != S_OK)
+             {
+                 *ppSwapChain =
+-                    new WrappedIDXGISwapChain4(realSC, realDevice, localDesc.OutputWindow, localDesc.Flags, false);
++                    new WrappedIDXGISwapChain4(realSC, realDevice, localDesc.OutputWindow, localDesc.Flags, false,
++                                               hdrBridgeActive, ownsHdrBridgeState);
  
-+    ApplyForcedHdr10Format(localDesc);
+                 // Set as currentSwapchain is FG is disabled
+                 if (!_skipFGSwapChainCreation)
+@@ -418,6 +495,13 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChain(IDXGIFactory* realFactory, Wrap
+         LOG_ERROR("CreateSwapChain failed: {:X}", (UINT) result);
+     }
+ 
++    if (FAILED(result) && ownsHdrBridgeState)
++    {
++        BeamNGHdrBridge::Publish(previousHdrBridgeState);
++        if (presentationClaim.newlyAcquired)
++            BeamNGHdrBridge::ReleasePresentationWindow(localDesc.OutputWindow);
++    }
 +
-     static bool firstCall = static_cast<bool>(State::Instance().gameQuirks & GameQuirk::NoFSRFGFirstSwapchain);
-     if (firstCall)
-     {
-@@ -612,6 +678,7 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChainForHwnd(IDXGIFactory2* realFacto
+     return result;
+ }
+ 
+@@ -496,6 +580,17 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChainForHwnd(IDXGIFactory2* realFacto
+         return result;
+     }
+ 
++    const bool isInternalOrNonD3D12 = _skipFGSwapChainCreation || !IsD3D12CommandQueue(pDevice);
++    const auto presentationClaim = BeamNGHdrBridge::ClaimPresentationWindow(hWnd, isInternalOrNonD3D12);
++    const bool ownsHdrBridgeState = presentationClaim.ownsState;
++    const bool previousHdrBridgeState = BeamNGHdrBridge::IsActive();
++    const bool windowsHdrActive =
++        ownsHdrBridgeState && BeamNGHdrBridge::IsWindowsHdrActive(realFactory, hWnd);
++    const bool hdrBridgeActive =
++        ownsHdrBridgeState ? PrepareBeamNGHdrBridge(localDesc, windowsHdrActive) : false;
++    if (ownsHdrBridgeState)
++        BeamNGHdrBridge::Publish(hdrBridgeActive);
++
+     LOG_DEBUG("Width: {}, Height: {}, Format: {}, Count: {}, Flags: {:X}, Hwnd: {:X}, SkipWrapping: {}",
+               localDesc.Width, localDesc.Height, (UINT) localDesc.Format, localDesc.BufferCount, localDesc.Flags,
+               (size_t) hWnd, _skipFGSwapChainCreation);
+@@ -612,6 +707,7 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChainForHwnd(IDXGIFactory2* realFacto
  
              if (FGSCResult == S_OK)
              {
-+                ApplyForcedHdr10ColorSpace((IDXGISwapChain*) *ppSwapChain, localDesc.Format);
++                ApplyBeamNGHdrBridgeColorSpace((IDXGISwapChain*) *ppSwapChain, hdrBridgeActive);
                  ((IDXGISwapChain*) *ppSwapChain)->GetDesc(&State::Instance().currentSwapchainDesc);
                  return FGSCResult;
              }
-@@ -769,6 +836,7 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChainForHwnd(IDXGIFactory2* realFacto
+@@ -769,6 +865,7 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChainForHwnd(IDXGIFactory2* realFacto
  
          if (result == S_OK)
          {
-+            ApplyForcedHdr10ColorSpace((IDXGISwapChain*) *ppSwapChain, localDesc.Format);
++            ApplyBeamNGHdrBridgeColorSpace((IDXGISwapChain*) *ppSwapChain, hdrBridgeActive);
              State::Instance().swapchainInteropApi = SwapchainInteropApi::None;
  
              // check for SL proxy
+@@ -795,7 +892,9 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChainForHwnd(IDXGIFactory2* realFacto
+             WrappedIDXGISwapChain4* wrapped;
+             if ((*ppSwapChain)->QueryInterface(IID_PPV_ARGS(&wrapped)) != S_OK)
+             {
+-                *ppSwapChain = new WrappedIDXGISwapChain4(realSC, readDevice, hWnd, localDesc.Flags, false);
++                *ppSwapChain =
++                    new WrappedIDXGISwapChain4(realSC, readDevice, hWnd, localDesc.Flags, false, hdrBridgeActive,
++                                               ownsHdrBridgeState);
+ 
+                 LOG_DEBUG("Created new WrappedIDXGISwapChain4: {0:X}, pDevice: {1:X}", (uintptr_t) *ppSwapChain,
+                           (uintptr_t) pDevice);
+@@ -823,6 +922,13 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChainForHwnd(IDXGIFactory2* realFacto
+         firstCall = false;
+     }
+ 
++    if (FAILED(result) && ownsHdrBridgeState)
++    {
++        BeamNGHdrBridge::Publish(previousHdrBridgeState);
++        if (presentationClaim.newlyAcquired)
++            BeamNGHdrBridge::ReleasePresentationWindow(hWnd);
++    }
++
+     return result;
+ }
+ 
 diff --git a/FrameGenNGEngine/hooks/FG_Hooks.cpp b/FrameGenNGEngine/hooks/FG_Hooks.cpp
-index 821cafa..152f1b3 100644
+index 821cafa..512d849 100644
 --- a/FrameGenNGEngine/hooks/FG_Hooks.cpp
 +++ b/FrameGenNGEngine/hooks/FG_Hooks.cpp
-@@ -24,6 +24,13 @@
+@@ -1,5 +1,6 @@
+ #include "pch.h"
+ #include "FG_Hooks.h"
++#include <misc/BeamNGHdrBridge.h>
+ #include <Config.h>
+ 
+ #include <framegen/ffx/FSRFG_Dx12.h>
+@@ -24,6 +25,13 @@
  
  #include <d3d12.h>
  #include <detours/detours.h>
@@ -285,7 +393,7 @@ index 821cafa..152f1b3 100644
  
  #define XEFG_RESOURCE_REF_LIMIT 1
  
-@@ -35,6 +42,160 @@ static ID3D12CommandQueue* currentCommandQueue = nullptr;
+@@ -35,6 +43,208 @@ static ID3D12CommandQueue* currentCommandQueue = nullptr;
  static bool _forcedHdrForXeFG = false;
  static HANDLE _semaphore = nullptr;
  
@@ -299,6 +407,54 @@ index 821cafa..152f1b3 100644
 +std::atomic_bool beamNGShutdownRequested = false;
 +std::once_flag beamNGShutdownWatcherOnce;
 +std::mutex beamNGShutdownTraceMutex;
++
++struct BeamNGHdrFormatTransition
++{
++    DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
++    bool managesState = false;
++    bool previousMode = false;
++    bool requestedMode = false;
++};
++
++bool IsGameFacingFgSwapChain(IUnknown* swapChain)
++{
++    return swapChain != nullptr && swapChain == State::Instance().currentFGSwapchain;
++}
++
++BeamNGHdrFormatTransition PrepareBeamNGHdrFormatTransition(IDXGISwapChain* swapChain,
++                                                           DXGI_FORMAT requestedFormat,
++                                                           bool internalResize)
++{
++    BeamNGHdrFormatTransition transition {};
++    transition.previousMode = BeamNGHdrBridge::IsActive();
++    transition.requestedMode = transition.previousMode;
++    transition.managesState = !internalResize && IsGameFacingFgSwapChain(swapChain);
++
++    if (transition.managesState)
++    {
++        const bool windowsHdrActive = BeamNGHdrBridge::IsWindowsHdrActive(swapChain);
++        transition.requestedMode = BeamNGHdrBridge::ResolveForFormat(
++            requestedFormat, transition.previousMode, windowsHdrActive);
++        BeamNGHdrBridge::Publish(transition.requestedMode);
++
++        LOG_DEBUG("BeamNG FG swapchain resize: Windows HDR {}, requested format {}, bridge {}",
++                  windowsHdrActive, (UINT) requestedFormat, transition.requestedMode ? "HDR10" : "SDR");
++    }
++
++    transition.format =
++        BeamNGHdrBridge::TranslateFormat(requestedFormat, transition.requestedMode);
++    return transition;
++}
++
++void RollBackBeamNGHdrFormatTransition(const BeamNGHdrFormatTransition& transition, HRESULT result)
++{
++    if (transition.managesState && FAILED(result))
++    {
++        BeamNGHdrBridge::Publish(transition.previousMode);
++        LOG_WARN("BeamNG FG swapchain resize failed; restored {} bridge state (result {:X})",
++                 transition.previousMode ? "HDR10" : "SDR", (UINT) result);
++    }
++}
 +
 +std::filesystem::path BeamNGSettingsPath()
 +{
@@ -446,7 +602,7 @@ index 821cafa..152f1b3 100644
  #if (XEFG_RESOURCE_REF_LIMIT == 0)
  inline static std::vector<void*> oldBackBuffers;
  #endif
-@@ -124,6 +285,8 @@ static bool RefuseUnderGameFsrFg()
+@@ -124,6 +334,8 @@ static bool RefuseUnderGameFsrFg()
  
  static bool CheckForFGStatus()
  {
@@ -455,35 +611,26 @@ index 821cafa..152f1b3 100644
      // Need to check overlay menu parameter, goes to places it shouldn't go
      // if (!Config::Instance()->OverlayMenu.value_or_default())
      //    return false;
-@@ -242,6 +405,13 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
+@@ -242,6 +454,9 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
              pDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
          }
  
-+        if (pDesc->BufferDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT &&
-+            Config::Instance()->ForceHDR.value_or_default() && Config::Instance()->UseHDR10.value_or_default())
-+        {
-+            LOG_INFO("ForceHDR10: replacing FG swapchain FP16/scRGB format before creation");
-+            pDesc->BufferDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
-+        }
++        pDesc->BufferDesc.Format =
++            BeamNGHdrBridge::TranslateFormat(pDesc->BufferDesc.Format, BeamNGHdrBridge::IsActive());
 +
          scResult = fg->CreateSwapchain(pFactory, cq, pDesc, ppSwapChain, true);
  
          // Looks like game is creating new swapchain,
-@@ -356,6 +526,13 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
+@@ -356,6 +571,8 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
              pDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
          }
  
-+        if (pDesc->Format == DXGI_FORMAT_R16G16B16A16_FLOAT && Config::Instance()->ForceHDR.value_or_default() &&
-+            Config::Instance()->UseHDR10.value_or_default())
-+        {
-+            LOG_INFO("ForceHDR10: replacing FG swapchain1 FP16/scRGB format before creation");
-+            pDesc->Format = DXGI_FORMAT_R10G10B10A2_UNORM;
-+        }
++        pDesc->Format = BeamNGHdrBridge::TranslateFormat(pDesc->Format, BeamNGHdrBridge::IsActive());
 +
          scResult = fg->CreateSwapchain1(pFactory, cq, hWnd, pDesc, pFullscreenDesc, ppSwapChain, true);
  
          // Looks like game is creating new swapchain,
-@@ -464,6 +641,8 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
+@@ -464,6 +681,8 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
      o_FGSCGetFullscreenDesc = (PFN_GetFullscreenDesc) pFactoryVTable[19];
      o_FGSCPresent1 = (PFN_Present1) pFactoryVTable[22];
      o_FGSCGetFrameLatencyWaitableObject = (PFN_GetFrameLatencyWaitableObject) pFactoryVTable[33];
@@ -492,7 +639,7 @@ index 821cafa..152f1b3 100644
      o_FGSCResizeBuffers1 = (PFN_ResizeBuffers1) pFactoryVTable[39];
  
      if (o_FGSCPresent != nullptr)
-@@ -477,6 +656,8 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
+@@ -477,6 +696,8 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
          LOG_TRACE("FGSCResizeTarget: {:X}", (size_t) o_FGSCResizeTarget);
          LOG_TRACE("FGSCGetFullscreenDesc: {:X}", (size_t) o_FGSCGetFullscreenDesc);
          LOG_TRACE("FGSCPresent1: {:X}", (size_t) o_FGSCPresent1);
@@ -501,7 +648,7 @@ index 821cafa..152f1b3 100644
          LOG_TRACE("FGSCResizeBuffers1: {:X}", (size_t) o_FGSCResizeBuffers1);
          LOG_TRACE("FGSCGetFrameLatencyWaitableObject: {:X}", (size_t) o_FGSCGetFrameLatencyWaitableObject);
  
-@@ -495,6 +676,12 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
+@@ -495,6 +716,12 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
          if (o_FGSCResizeBuffers1 != nullptr)
              DetourAttach(&(PVOID&) o_FGSCResizeBuffers1, hkResizeBuffers1);
  
@@ -514,7 +661,7 @@ index 821cafa..152f1b3 100644
          if (State::Instance().activeFgOutput == FGOutput::XeFG)
          {
              if (o_FGSCGetFullscreenState != nullptr)
-@@ -524,6 +711,8 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
+@@ -524,6 +751,8 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
              o_FGSCResizeTarget = nullptr;
              o_FGSCGetFullscreenDesc = nullptr;
              o_FGSCPresent1 = nullptr;
@@ -523,81 +670,111 @@ index 821cafa..152f1b3 100644
              o_FGSCResizeBuffers1 = nullptr;
              o_FGSCGetFrameLatencyWaitableObject = nullptr;
          }
-@@ -669,6 +858,16 @@ HRESULT FGHooks::hkGetFullscreenState(IDXGISwapChain* This, BOOL* pFullscreen, I
+@@ -669,6 +898,9 @@ HRESULT FGHooks::hkGetFullscreenState(IDXGISwapChain* This, BOOL* pFullscreen, I
  HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat,
                                   UINT SwapChainFlags)
  {
-+    if (NewFormat == DXGI_FORMAT_R16G16B16A16_FLOAT)
-+    {
-+        LOG_INFO("BeamNG HDR probe: FG ResizeBuffers observed FP16, {}x{}, buffers {}", Width, Height, BufferCount);
-+        if (Config::Instance()->ForceHDR.value_or_default() && Config::Instance()->UseHDR10.value_or_default())
-+        {
-+            LOG_INFO("ForceHDR10: replacing FG ResizeBuffers FP16/scRGB format");
-+            NewFormat = DXGI_FORMAT_R10G10B10A2_UNORM;
-+        }
-+    }
++    const auto hdrTransition = PrepareBeamNGHdrFormatTransition(This, NewFormat, _skipResize);
++    NewFormat = hdrTransition.format;
 +
      // Skip XeFG's internal call
      if (_skipResize)
      {
-@@ -914,6 +1113,16 @@ HRESULT FGHooks::hkResizeTarget(IDXGISwapChain* This, const DXGI_MODE_DESC* pNew
+@@ -859,11 +1091,25 @@ HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Wi
+     }
+ 
+     _skipResize1 = false;
++    RollBackBeamNGHdrFormatTransition(hdrTransition, result);
+ 
+     LOG_DEBUG("Result: {:X}, Caller: {}", (UINT) result, Util::WhoIsTheCaller(_ReturnAddress()));
+ 
+     if (result == S_OK)
+     {
++        if (hdrTransition.managesState && o_FGSCSetColorSpace1 != nullptr)
++        {
++            const auto targetColorSpace = hdrTransition.requestedMode
++                                              ? DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020
++                                              : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
++            const HRESULT colorResult = o_FGSCSetColorSpace1((IDXGISwapChain3*) This, targetColorSpace);
++            if (FAILED(colorResult))
++                LOG_ERROR("BeamNG FG swapchain color-space update failed: {:X}", (UINT) colorResult);
++            else
++                LOG_DEBUG("BeamNG FG swapchain color space set to {}",
++                          hdrTransition.requestedMode ? "HDR10/BT.2100" : "SDR/Rec.709");
++        }
++
+         if (fg != nullptr)
+         {
+             State::Instance().fgChanged = true;
+@@ -914,6 +1160,10 @@ HRESULT FGHooks::hkResizeTarget(IDXGISwapChain* This, const DXGI_MODE_DESC* pNew
  HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT Format,
                                    UINT SwapChainFlags, const UINT* pCreationNodeMask, IUnknown* const* ppPresentQueue)
  {
-+    if (Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
-+    {
-+        LOG_INFO("BeamNG HDR probe: FG ResizeBuffers1 observed FP16, {}x{}, buffers {}", Width, Height, BufferCount);
-+        if (Config::Instance()->ForceHDR.value_or_default() && Config::Instance()->UseHDR10.value_or_default())
-+        {
-+            LOG_INFO("ForceHDR10: replacing FG ResizeBuffers1 FP16/scRGB format");
-+            Format = DXGI_FORMAT_R10G10B10A2_UNORM;
-+        }
-+    }
++    const auto hdrTransition =
++        PrepareBeamNGHdrFormatTransition(This, Format, _skipResize1);
++    Format = hdrTransition.format;
 +
      // Skip XeFG's internal call
      if (_skipResize1)
      {
-@@ -1141,6 +1350,39 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT
+@@ -1110,10 +1360,25 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT
+         _skipResize = false;
+     }
+ 
++    RollBackBeamNGHdrFormatTransition(hdrTransition, result);
++
+     LOG_DEBUG("Result: {:X}, Caller: {}", (UINT) result, Util::WhoIsTheCaller(_ReturnAddress()));
+ 
+     if (result == S_OK)
+     {
++        if (hdrTransition.managesState && o_FGSCSetColorSpace1 != nullptr)
++        {
++            const auto targetColorSpace = hdrTransition.requestedMode
++                                              ? DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020
++                                              : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
++            const HRESULT colorResult = o_FGSCSetColorSpace1(This, targetColorSpace);
++            if (FAILED(colorResult))
++                LOG_ERROR("BeamNG FG swapchain color-space update failed: {:X}", (UINT) colorResult);
++            else
++                LOG_DEBUG("BeamNG FG swapchain color space set to {}",
++                          hdrTransition.requestedMode ? "HDR10/BT.2100" : "SDR/Rec.709");
++        }
++
+         if (fg != nullptr)
+         {
+             State::Instance().fgChanged = true;
+@@ -1141,6 +1406,30 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT
      return result;
  }
  
 +HRESULT FGHooks::hkCheckColorSpaceSupport(IDXGISwapChain3* This, DXGI_COLOR_SPACE_TYPE ColorSpace,
 +                                          UINT* pColorSpaceSupport)
 +{
-+    const auto result = o_FGSCCheckColorSpaceSupport(This, ColorSpace, pColorSpaceSupport);
-+
-+    if (ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709 ||
-+        ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020)
-+    {
-+        LOG_INFO("BeamNG HDR probe: FG CheckColorSpaceSupport color {}, support {}, result {:X}", (UINT) ColorSpace,
-+                 pColorSpaceSupport != nullptr ? *pColorSpaceSupport : 0, (UINT) result);
-+    }
-+
-+    return result;
++    return o_FGSCCheckColorSpaceSupport(This, ColorSpace, pColorSpaceSupport);
 +}
 +
 +HRESULT FGHooks::hkSetColorSpace1(IDXGISwapChain3* This, DXGI_COLOR_SPACE_TYPE ColorSpace)
 +{
-+    if (ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709 ||
-+        ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020)
-+    {
-+        LOG_INFO("BeamNG HDR probe: FG SetColorSpace1 color {}", (UINT) ColorSpace);
-+    }
++    const bool managesState = IsGameFacingFgSwapChain(This);
++    const bool previousMode = BeamNGHdrBridge::IsActive();
++    const bool requestedMode = managesState
++                                   ? BeamNGHdrBridge::ResolveForColorSpace(
++                                         ColorSpace, previousMode,
++                                         BeamNGHdrBridge::IsWindowsHdrActive(This))
++                                   : previousMode;
++    ColorSpace = BeamNGHdrBridge::TranslateColorSpace(ColorSpace, requestedMode);
 +
-+    if (ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709 && Config::Instance()->ForceHDR.value_or_default() &&
-+        Config::Instance()->UseHDR10.value_or_default())
-+    {
-+        LOG_INFO("ForceHDR10: replacing FG scRGB color space with HDR10/BT.2100");
-+        ColorSpace = DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
-+    }
++    const HRESULT result = o_FGSCSetColorSpace1(This, ColorSpace);
++    if (managesState && SUCCEEDED(result))
++        BeamNGHdrBridge::Publish(requestedMode);
 +
-+    return o_FGSCSetColorSpace1(This, ColorSpace);
++    return result;
 +}
 +
  HRESULT FGHooks::hkFGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags)
  {
      // Skip XeFG's internal call
-@@ -1212,6 +1454,8 @@ HRESULT FGHooks::hkFGPresent1(IDXGISwapChain1* This, UINT SyncInterval, UINT Fla
+@@ -1212,6 +1501,8 @@ HRESULT FGHooks::hkFGPresent1(IDXGISwapChain1* This, UINT SyncInterval, UINT Fla
  HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
                             const DXGI_PRESENT_PARAMETERS* pPresentParameters)
  {
@@ -722,6 +899,228 @@ index 682ac48..8d9d346 100644
      auto handleId = InHandle->Id;
  
      // Clean up framegen
+diff --git a/FrameGenNGEngine/misc/BeamNGHdrBridge.h b/FrameGenNGEngine/misc/BeamNGHdrBridge.h
+new file mode 100644
+index 0000000..5a41be9
+--- /dev/null
++++ b/FrameGenNGEngine/misc/BeamNGHdrBridge.h
+@@ -0,0 +1,216 @@
++#pragma once
++
++#include <Config.h>
++#include <State.h>
++
++#include <dxgi1_6.h>
++
++namespace BeamNGHdrBridge
++{
++struct PresentationWindowClaim
++{
++    bool ownsState = false;
++    bool newlyAcquired = false;
++};
++
++inline bool IsEnabled()
++{
++    const auto* config = Config::Instance();
++    return config->ForceHDR.value_or_default() && config->UseHDR10.value_or_default();
++}
++
++inline constexpr bool ShouldUseHdr10Bridge(bool windowsHdrActive, bool beamNgHdrRequested)
++{
++    return windowsHdrActive && beamNgHdrRequested;
++}
++
++static_assert(!ShouldUseHdr10Bridge(false, false));
++static_assert(!ShouldUseHdr10Bridge(false, true));
++static_assert(!ShouldUseHdr10Bridge(true, false));
++static_assert(ShouldUseHdr10Bridge(true, true));
++
++inline bool IsHdrOutput(IDXGIOutput* output)
++{
++    if (output == nullptr)
++        return false;
++
++    IDXGIOutput6* output6 = nullptr;
++    if (FAILED(output->QueryInterface(IID_PPV_ARGS(&output6))) || output6 == nullptr)
++        return false;
++
++    DXGI_OUTPUT_DESC1 desc {};
++    const bool active = SUCCEEDED(output6->GetDesc1(&desc)) &&
++                        desc.ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
++    output6->Release();
++    return active;
++}
++
++inline LONG64 IntersectionArea(const RECT& first, const RECT& second)
++{
++    const LONG width = (std::max)(0L, (std::min)(first.right, second.right) -
++                                         (std::max)(first.left, second.left));
++    const LONG height = (std::max)(0L, (std::min)(first.bottom, second.bottom) -
++                                          (std::max)(first.top, second.top));
++    return static_cast<LONG64>(width) * height;
++}
++
++inline bool IsWindowsHdrActive(IDXGIFactory* factory, HWND window)
++{
++    if (factory == nullptr || window == nullptr)
++        return false;
++
++    RECT windowBounds {};
++    if (!GetWindowRect(window, &windowBounds))
++        return false;
++
++    LONG64 largestIntersection = -1;
++    bool hdrActive = false;
++
++    for (UINT adapterIndex = 0;; ++adapterIndex)
++    {
++        IDXGIAdapter* adapter = nullptr;
++        const HRESULT adapterResult = factory->EnumAdapters(adapterIndex, &adapter);
++        if (adapterResult == DXGI_ERROR_NOT_FOUND)
++            break;
++        if (FAILED(adapterResult) || adapter == nullptr)
++            continue;
++
++        for (UINT outputIndex = 0;; ++outputIndex)
++        {
++            IDXGIOutput* output = nullptr;
++            const HRESULT outputResult = adapter->EnumOutputs(outputIndex, &output);
++            if (outputResult == DXGI_ERROR_NOT_FOUND)
++                break;
++            if (FAILED(outputResult) || output == nullptr)
++                continue;
++
++            DXGI_OUTPUT_DESC outputDesc {};
++            if (SUCCEEDED(output->GetDesc(&outputDesc)))
++            {
++                const LONG64 area = IntersectionArea(windowBounds, outputDesc.DesktopCoordinates);
++                if (area > largestIntersection)
++                {
++                    largestIntersection = area;
++                    hdrActive = IsHdrOutput(output);
++                }
++            }
++
++            output->Release();
++        }
++
++        adapter->Release();
++    }
++
++    return largestIntersection > 0 && hdrActive;
++}
++
++inline bool IsWindowsHdrActive(IDXGISwapChain* swapChain)
++{
++    if (swapChain == nullptr)
++        return false;
++
++    IDXGIOutput* output = nullptr;
++    if (FAILED(swapChain->GetContainingOutput(&output)) || output == nullptr)
++        return false;
++
++    const bool active = IsHdrOutput(output);
++    output->Release();
++    return active;
++}
++
++inline PresentationWindowClaim ClaimPresentationWindow(HWND window, bool internalSwapChain)
++{
++    if (window == nullptr || internalSwapChain)
++        return {};
++
++    DWORD windowProcessId = 0;
++    GetWindowThreadProcessId(window, &windowProcessId);
++    if (windowProcessId != GetCurrentProcessId())
++        return {};
++
++    auto& owner = State::Instance().beamNgPresentationWindow;
++    HWND current = owner.load(std::memory_order_acquire);
++
++    if (current == window)
++        return { true, false };
++
++    if (current != nullptr && IsWindow(current))
++        return {};
++
++    if (owner.compare_exchange_strong(current, window, std::memory_order_acq_rel))
++    {
++        LOG_INFO("BeamNG presentation window captured: {:X}", reinterpret_cast<size_t>(window));
++        return { true, true };
++    }
++
++    return { current == window, false };
++}
++
++inline void ReleasePresentationWindow(HWND window)
++{
++    HWND expected = window;
++    if (State::Instance().beamNgPresentationWindow.compare_exchange_strong(expected, nullptr,
++                                                                           std::memory_order_acq_rel))
++        LOG_INFO("BeamNG presentation window released: {:X}", reinterpret_cast<size_t>(window));
++}
++
++inline bool IsActive()
++{
++    return State::Instance().beamNgHdr10BridgeActive.load(std::memory_order_relaxed);
++}
++
++inline void Publish(bool active)
++{
++    const bool previous =
++        State::Instance().beamNgHdr10BridgeActive.exchange(active, std::memory_order_relaxed);
++    if (previous == active)
++        return;
++
++    LOG_INFO("BeamNG HDR10 bridge {}", active ? "enabled for scRGB input" : "disabled for SDR input");
++}
++
++inline bool ResolveForFormat(DXGI_FORMAT requestedFormat, bool currentMode, bool windowsHdrActive)
++{
++    if (!IsEnabled() || !windowsHdrActive)
++        return false;
++
++    if (requestedFormat == DXGI_FORMAT_UNKNOWN)
++        return currentMode;
++
++    return ShouldUseHdr10Bridge(
++        windowsHdrActive, requestedFormat == DXGI_FORMAT_R16G16B16A16_FLOAT);
++}
++
++inline DXGI_FORMAT TranslateFormat(DXGI_FORMAT requestedFormat, bool active)
++{
++    if (active && requestedFormat == DXGI_FORMAT_R16G16B16A16_FLOAT)
++        return DXGI_FORMAT_R10G10B10A2_UNORM;
++
++    return requestedFormat;
++}
++
++inline bool ResolveForColorSpace(DXGI_COLOR_SPACE_TYPE requestedColorSpace, bool currentMode,
++                                 bool windowsHdrActive)
++{
++    if (!IsEnabled() || !windowsHdrActive)
++        return false;
++
++    if (requestedColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709 ||
++        requestedColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020)
++        return ShouldUseHdr10Bridge(windowsHdrActive, true);
++
++    if (requestedColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709 ||
++        requestedColorSpace == DXGI_COLOR_SPACE_RGB_STUDIO_G22_NONE_P709)
++        return false;
++
++    return currentMode;
++}
++
++inline DXGI_COLOR_SPACE_TYPE TranslateColorSpace(DXGI_COLOR_SPACE_TYPE requestedColorSpace, bool active)
++{
++    if (active && requestedColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709)
++        return DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
++
++    return requestedColorSpace;
++}
++}
 diff --git a/FrameGenNGEngine/misc/GameConfigs.cpp b/FrameGenNGEngine/misc/GameConfigs.cpp
 index db54720..af73169 100644
 --- a/FrameGenNGEngine/misc/GameConfigs.cpp
@@ -735,61 +1134,324 @@ index db54720..af73169 100644
      },
  
      // Red Dead Redemption 2
+diff --git a/FrameGenNGEngine/resource_tracking/ResTrack_dx12.cpp b/FrameGenNGEngine/resource_tracking/ResTrack_dx12.cpp
+index 240ccb5..7be9ef7 100644
+--- a/FrameGenNGEngine/resource_tracking/ResTrack_dx12.cpp
++++ b/FrameGenNGEngine/resource_tracking/ResTrack_dx12.cpp
+@@ -1,5 +1,6 @@
+ #include "pch.h"
+ #include "ResTrack_dx12.h"
++#include <misc/BeamNGHdrBridge.h>
+ 
+ #include <Config.h>
+ #include <State.h>
+@@ -569,16 +570,13 @@ void ResTrack_Dx12::hkCreateRenderTargetView(ID3D12Device* This, ID3D12Resource*
+                                              D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor)
+ {
+     // force hdr for swapchain buffer
+-    if (pResource != nullptr && pDesc != nullptr && Config::Instance()->ForceHDR.value_or_default())
++    if (pResource != nullptr && pDesc != nullptr && BeamNGHdrBridge::IsActive())
+     {
+         for (size_t i = 0; i < State::Instance().scBuffers.size(); i++)
+         {
+             if (State::Instance().scBuffers[i] == pResource)
+             {
+-                if (Config::Instance()->UseHDR10.value_or_default())
+-                    pDesc->Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+-                else
+-                    pDesc->Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
++                pDesc->Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+ 
+                 break;
+             }
+@@ -619,16 +617,13 @@ void ResTrack_Dx12::hkCreateShaderResourceView(ID3D12Device* This, ID3D12Resourc
+                                                D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor)
+ {
+     // force hdr for swapchain buffer
+-    if (pResource != nullptr && pDesc != nullptr && Config::Instance()->ForceHDR.value_or_default())
++    if (pResource != nullptr && pDesc != nullptr && BeamNGHdrBridge::IsActive())
+     {
+         for (size_t i = 0; i < State::Instance().scBuffers.size(); i++)
+         {
+             if (State::Instance().scBuffers[i] == pResource)
+             {
+-                if (Config::Instance()->UseHDR10.value_or_default())
+-                    pDesc->Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+-                else
+-                    pDesc->Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
++                pDesc->Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+ 
+                 break;
+             }
+@@ -669,16 +664,13 @@ void ResTrack_Dx12::hkCreateUnorderedAccessView(ID3D12Device* This, ID3D12Resour
+                                                 D3D12_UNORDERED_ACCESS_VIEW_DESC* pDesc,
+                                                 D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor)
+ {
+-    if (pResource != nullptr && pDesc != nullptr && Config::Instance()->ForceHDR.value_or_default())
++    if (pResource != nullptr && pDesc != nullptr && BeamNGHdrBridge::IsActive())
+     {
+         for (size_t i = 0; i < State::Instance().scBuffers.size(); i++)
+         {
+             if (State::Instance().scBuffers[i] == pResource)
+             {
+-                if (Config::Instance()->UseHDR10.value_or_default())
+-                    pDesc->Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+-                else
+-                    pDesc->Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
++                pDesc->Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+ 
+                 break;
+             }
 diff --git a/FrameGenNGEngine/wrapped/wrapped_swapchain.cpp b/FrameGenNGEngine/wrapped/wrapped_swapchain.cpp
-index dc70036..22b9382 100644
+index dc70036..47068b4 100644
 --- a/FrameGenNGEngine/wrapped/wrapped_swapchain.cpp
 +++ b/FrameGenNGEngine/wrapped/wrapped_swapchain.cpp
-@@ -867,6 +867,15 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::GetDesc(DXGI_SWAP_CHAIN_DESC*
+@@ -1,5 +1,6 @@
+ #include "pch.h"
+ #include "wrapped_swapchain.h"
++#include <misc/BeamNGHdrBridge.h>
+ 
+ #include <Util.h>
+ #include <Config.h>
+@@ -542,8 +543,11 @@ static HRESULT LocalPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT
+ }
+ 
+ WrappedIDXGISwapChain4::WrappedIDXGISwapChain4(IDXGISwapChain* real, IUnknown* pDevice, HWND hWnd, UINT flags,
+-                                               bool isUWP)
+-    : _real(real), _device(pDevice), _handle(hWnd), _refcount(1), _uwp(isUWP)
++                                               bool isUWP, bool beamNgHdr10BridgeActive,
++                                               bool ownsBeamNgHdrBridgeState)
++    : _real(real), _device(pDevice), _handle(hWnd), _refcount(1), _uwp(isUWP),
++      _beamNgHdr10BridgeActive(beamNgHdr10BridgeActive),
++      _ownsBeamNgHdrBridgeState(ownsBeamNgHdrBridgeState)
+ {
+     _id = ++scCount;
+     _lastFlags = flags;
+@@ -867,6 +871,19 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::GetDesc(DXGI_SWAP_CHAIN_DESC*
  HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers(UINT BufferCount, UINT Width, UINT Height,
                                                                  DXGI_FORMAT NewFormat, UINT SwapChainFlags)
  {
-+    if (NewFormat == DXGI_FORMAT_R16G16B16A16_FLOAT)
++    const bool previousHdrBridgeMode = _beamNgHdr10BridgeActive;
++    const bool windowsHdrActive =
++        _ownsBeamNgHdrBridgeState && BeamNGHdrBridge::IsWindowsHdrActive(_real);
++    const bool requestedHdrBridgeMode = _ownsBeamNgHdrBridgeState
++                                            ? BeamNGHdrBridge::ResolveForFormat(
++                                                  NewFormat, previousHdrBridgeMode, windowsHdrActive)
++                                            : previousHdrBridgeMode;
++    if (_ownsBeamNgHdrBridgeState)
 +    {
-+        LOG_INFO("BeamNG HDR probe: ResizeBuffers observed FP16 scRGB");
-+        if (Config::Instance()->ForceHDR.value_or_default() && Config::Instance()->UseHDR10.value_or_default())
-+        {
-+            LOG_INFO("ForceHDR10: replacing FP16 scRGB format before ResizeBuffers");
-+            NewFormat = DXGI_FORMAT_R10G10B10A2_UNORM;
-+        }
++        NewFormat = BeamNGHdrBridge::TranslateFormat(NewFormat, requestedHdrBridgeMode);
++        BeamNGHdrBridge::Publish(requestedHdrBridgeMode);
 +    }
++
      LOG_DEBUG("");
  
  #ifdef USE_LOCAL_MUTEX
-@@ -1241,6 +1250,21 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::CheckColorSpaceSupport(DXGI_CO
+@@ -1009,53 +1026,28 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers(UINT BufferCount
+         State::Instance().lastMipBiasMax = -100.0f;
+     }
+ 
+-    // Crude implementation of EndlesslyFlowering's AutoHDR-ReShade
+-    // https://github.com/EndlesslyFlowering/AutoHDR-ReShade
+-    if (Config::Instance()->ForceHDR.value_or_default())
++    if (SUCCEEDED(result))
+     {
+-        LOG_INFO("Force HDR on");
++        _beamNgHdr10BridgeActive = requestedHdrBridgeMode;
+ 
+-        do
++        const bool bridgeModeChanged = requestedHdrBridgeMode != previousHdrBridgeMode;
++        if (_ownsBeamNgHdrBridgeState && _real3 != nullptr &&
++            !Config::Instance()->SkipColorSpace.value_or_default() &&
++            (requestedHdrBridgeMode || bridgeModeChanged))
+         {
+-            if (_real3 == nullptr)
+-                break;
+-
+-            NewFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
+-            DXGI_COLOR_SPACE_TYPE hdrCS = DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709;
+-
+-            if (Config::Instance()->UseHDR10.value_or_default())
+-            {
+-                NewFormat = DXGI_FORMAT_R10G10B10A2_UNORM;
+-                hdrCS = DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+-            }
+-
+-            if (!Config::Instance()->SkipColorSpace.value_or_default())
+-            {
+-                UINT css = 0;
+-
+-                result = _real3->CheckColorSpaceSupport(hdrCS, &css);
+-
+-                if (result != S_OK)
+-                {
+-                    LOG_ERROR("CheckColorSpaceSupport error: {:X}", (UINT) result);
+-                    break;
+-                }
+-
+-                if (DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT & css)
+-                {
+-                    result = _real3->SetColorSpace1(hdrCS);
+-
+-                    if (result != S_OK)
+-                    {
+-                        LOG_ERROR("SetColorSpace1 error: {:X}", (UINT) result);
+-                        break;
+-                    }
+-                }
+-
+-                LOG_INFO("HDR format and color space are set");
+-            }
+-
+-        } while (false);
++            const auto targetColorSpace = requestedHdrBridgeMode
++                                              ? DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020
++                                              : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
++            UINT support = 0;
++            if (SUCCEEDED(_real3->CheckColorSpaceSupport(targetColorSpace, &support)) &&
++                (support & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT) != 0)
++                _real3->SetColorSpace1(targetColorSpace);
++        }
++    }
++    else
++    {
++        if (_ownsBeamNgHdrBridgeState)
++            BeamNGHdrBridge::Publish(previousHdrBridgeMode);
+     }
+ 
+     State::Instance().scBuffers.clear();
+@@ -1241,10 +1233,21 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::CheckColorSpaceSupport(DXGI_CO
  
  HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::SetColorSpace1(DXGI_COLOR_SPACE_TYPE ColorSpace)
  {
-+    DXGI_SWAP_CHAIN_DESC desc {};
-+    const bool isPrototypeHdr10Swapchain =
-+        SUCCEEDED(_real->GetDesc(&desc)) && desc.BufferDesc.Format == DXGI_FORMAT_R10G10B10A2_UNORM;
-+
-+    if (ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709)
-+    {
-+        LOG_INFO("BeamNG HDR probe: SetColorSpace1 observed scRGB, swapchain format: {}", (UINT) desc.BufferDesc.Format);
-+        if (isPrototypeHdr10Swapchain && Config::Instance()->ForceHDR.value_or_default() &&
-+            Config::Instance()->UseHDR10.value_or_default())
-+        {
-+            LOG_INFO("ForceHDR10: replacing scRGB color space with HDR10/BT.2100");
-+            ColorSpace = DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
-+        }
-+    }
++    const bool requestedHdrBridgeMode = _ownsBeamNgHdrBridgeState
++                                            ? BeamNGHdrBridge::ResolveForColorSpace(
++                                                  ColorSpace, _beamNgHdr10BridgeActive,
++                                                  BeamNGHdrBridge::IsWindowsHdrActive(_real))
++                                            : _beamNgHdr10BridgeActive;
++    if (_ownsBeamNgHdrBridgeState)
++        ColorSpace = BeamNGHdrBridge::TranslateColorSpace(ColorSpace, requestedHdrBridgeMode);
 +
      auto result = _real3->SetColorSpace1(ColorSpace);
  
      if (SUCCEEDED(result))
-@@ -1262,6 +1286,15 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers1(UINT BufferCoun
+     {
++        _beamNgHdr10BridgeActive = requestedHdrBridgeMode;
++        if (_ownsBeamNgHdrBridgeState)
++            BeamNGHdrBridge::Publish(requestedHdrBridgeMode);
+         UpdateOutputColorSpace(ColorSpace);
+ 
+         CheckForHdrOutput();
+@@ -1262,6 +1265,19 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers1(UINT BufferCoun
                                                                   const UINT* pCreationNodeMask,
                                                                   IUnknown* const* ppPresentQueue)
  {
-+    if (Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
++    const bool previousHdrBridgeMode = _beamNgHdr10BridgeActive;
++    const bool windowsHdrActive =
++        _ownsBeamNgHdrBridgeState && BeamNGHdrBridge::IsWindowsHdrActive(_real);
++    const bool requestedHdrBridgeMode = _ownsBeamNgHdrBridgeState
++                                            ? BeamNGHdrBridge::ResolveForFormat(
++                                                  Format, previousHdrBridgeMode, windowsHdrActive)
++                                            : previousHdrBridgeMode;
++    if (_ownsBeamNgHdrBridgeState)
 +    {
-+        LOG_INFO("BeamNG HDR probe: ResizeBuffers1 observed FP16 scRGB");
-+        if (Config::Instance()->ForceHDR.value_or_default() && Config::Instance()->UseHDR10.value_or_default())
-+        {
-+            LOG_INFO("ForceHDR10: replacing FP16 scRGB format before ResizeBuffers1");
-+            Format = DXGI_FORMAT_R10G10B10A2_UNORM;
-+        }
++        Format = BeamNGHdrBridge::TranslateFormat(Format, requestedHdrBridgeMode);
++        BeamNGHdrBridge::Publish(requestedHdrBridgeMode);
 +    }
++
      LOG_DEBUG("");
  
  #ifdef USE_LOCAL_MUTEX
+@@ -1435,50 +1451,28 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers1(UINT BufferCoun
+         State::Instance().lastMipBiasMax = -100.0f;
+     }
+ 
+-    // Crude implementation of EndlesslyFlowering's AutoHDR-ReShade
+-    // https://github.com/EndlesslyFlowering/AutoHDR-ReShade
+-    if (Config::Instance()->ForceHDR.value_or_default())
++    if (SUCCEEDED(result))
+     {
+-        LOG_INFO("Force HDR on");
++        _beamNgHdr10BridgeActive = requestedHdrBridgeMode;
+ 
+-        do
++        const bool bridgeModeChanged = requestedHdrBridgeMode != previousHdrBridgeMode;
++        if (_ownsBeamNgHdrBridgeState && _real3 != nullptr &&
++            !Config::Instance()->SkipColorSpace.value_or_default() &&
++            (requestedHdrBridgeMode || bridgeModeChanged))
+         {
+-            Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+-            DXGI_COLOR_SPACE_TYPE hdrCS = DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709;
+-
+-            if (Config::Instance()->UseHDR10.value_or_default())
+-            {
+-                Format = DXGI_FORMAT_R10G10B10A2_UNORM;
+-                hdrCS = DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+-            }
+-
+-            if (!Config::Instance()->SkipColorSpace.value_or_default())
+-            {
+-                UINT css = 0;
+-
+-                auto result = _real3->CheckColorSpaceSupport(hdrCS, &css);
+-
+-                if (result != S_OK)
+-                {
+-                    LOG_ERROR("CheckColorSpaceSupport error: {:X}", (UINT) result);
+-                    break;
+-                }
+-
+-                if (DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT & css)
+-                {
+-                    result = _real3->SetColorSpace1(hdrCS);
+-
+-                    if (result != S_OK)
+-                    {
+-                        LOG_ERROR("SetColorSpace1 error: {:X}", (UINT) result);
+-                        break;
+-                    }
+-                }
+-
+-                LOG_INFO("HDR format and color space are set");
+-            }
+-
+-        } while (false);
++            const auto targetColorSpace = requestedHdrBridgeMode
++                                              ? DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020
++                                              : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
++            UINT support = 0;
++            if (SUCCEEDED(_real3->CheckColorSpaceSupport(targetColorSpace, &support)) &&
++                (support & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT) != 0)
++                _real3->SetColorSpace1(targetColorSpace);
++        }
++    }
++    else
++    {
++        if (_ownsBeamNgHdrBridgeState)
++            BeamNGHdrBridge::Publish(previousHdrBridgeMode);
+     }
+ 
+     State::Instance().scBuffers.clear();
+diff --git a/FrameGenNGEngine/wrapped/wrapped_swapchain.h b/FrameGenNGEngine/wrapped/wrapped_swapchain.h
+index dd2a9dd..9c113a9 100644
+--- a/FrameGenNGEngine/wrapped/wrapped_swapchain.h
++++ b/FrameGenNGEngine/wrapped/wrapped_swapchain.h
+@@ -14,7 +14,8 @@ using Microsoft::WRL::ComPtr;
+ class DECLSPEC_UUID("3af622a3-82d0-49cd-994f-cce05122c222") WrappedIDXGISwapChain4 final : public IDXGISwapChain4
+ {
+   public:
+-    WrappedIDXGISwapChain4(IDXGISwapChain* real, IUnknown* pDevice, HWND hWnd, UINT flags, bool isUWP);
++    WrappedIDXGISwapChain4(IDXGISwapChain* real, IUnknown* pDevice, HWND hWnd, UINT flags, bool isUWP,
++                           bool beamNgHdr10BridgeActive = false, bool ownsBeamNgHdrBridgeState = false);
+     virtual ~WrappedIDXGISwapChain4();
+ 
+     // implement IUnknown
+@@ -90,6 +91,8 @@ class DECLSPEC_UUID("3af622a3-82d0-49cd-994f-cce05122c222") WrappedIDXGISwapChai
+     bool _uwp = false;
+     LONG _refcount;
+     UINT _lastFlags = 0;
++    bool _beamNgHdr10BridgeActive = false;
++    bool _ownsBeamNgHdrBridgeState = false;
+ 
+     IUnknown* _device = nullptr;
+ 
