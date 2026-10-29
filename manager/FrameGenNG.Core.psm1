@@ -433,13 +433,21 @@ function Get-FileSha256 {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Test-MutableRuntimeFile {
+    param([Parameter(Mandatory)][string]$RelativePath)
+
+    return $RelativePath.Replace('\', '/').StartsWith('logs/', [System.StringComparison]::OrdinalIgnoreCase)
+}
+
 function Get-DirectorySha256 {
     param([Parameter(Mandatory)][string]$Path)
 
     $root = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
     $lines = foreach ($file in Get-ChildItem -LiteralPath $root -Recurse -File -Force | Sort-Object FullName) {
-        $relative = $file.FullName.Substring($root.Length).TrimStart('\').Replace('\', '/').ToLowerInvariant()
-        "$relative|$(Get-FileSha256 -Path $file.FullName)"
+        $relativePath = $file.FullName.Substring($root.Length).TrimStart('\').Replace('\', '/')
+        if (-not (Test-MutableRuntimeFile -RelativePath $relativePath)) {
+            "$($relativePath.ToLowerInvariant())|$(Get-FileSha256 -Path $file.FullName)"
+        }
     }
     $bytes = [System.Text.Encoding]::UTF8.GetBytes(($lines -join "`n"))
     $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -460,12 +468,6 @@ function Get-DirectoryFileRecords {
             sha256 = Get-FileSha256 -Path $_.FullName
         }
     })
-}
-
-function Test-MutableRuntimeFile {
-    param([Parameter(Mandatory)][string]$RelativePath)
-
-    return $RelativePath.Replace('\', '/').StartsWith('logs/', [System.StringComparison]::OrdinalIgnoreCase)
 }
 
 function Test-InstalledDirectoryFiles {
@@ -494,6 +496,47 @@ function Test-InstalledDirectoryFiles {
         $relativePath = [string]$file.relativePath
         if (-not $currentHashes.ContainsKey($relativePath) -or
             $currentHashes[$relativePath] -ne [string]$file.sha256) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Get-IniSettings {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $settings = [System.Collections.Generic.Dictionary[string, string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    $section = ''
+    foreach ($line in Get-Content -LiteralPath $Path) {
+        $trimmedLine = $line.Trim()
+        if ([string]::IsNullOrWhiteSpace($trimmedLine) -or
+            $trimmedLine.StartsWith(';') -or
+            $trimmedLine.StartsWith('#')) {
+            continue
+        }
+        if ($trimmedLine -match '^\[(.+)\]$') {
+            $section = $Matches[1].Trim()
+        } elseif ($trimmedLine -match '^([^=]+)=(.*)$') {
+            $qualifiedKey = "$section`n$($Matches[1].Trim())"
+            $settings[$qualifiedKey] = $Matches[2].Trim()
+        }
+    }
+    return $settings
+}
+
+function Test-IniSemanticMatch {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$ReferencePath
+    )
+
+    $currentSettings = Get-IniSettings -Path $Path
+    $requiredSettings = Get-IniSettings -Path $ReferencePath
+    foreach ($requiredSetting in $requiredSettings.GetEnumerator()) {
+        if (-not $currentSettings.ContainsKey($requiredSetting.Key) -or
+            $currentSettings[$requiredSetting.Key] -cne $requiredSetting.Value) {
             return $false
         }
     }
@@ -1099,14 +1142,21 @@ function Get-FrameGenNGStatus {
     }
 
     $state = $stateRecord.state
+    $runtimeConfigReference = Join-Path (Get-FrameGenNGPackageRoot) 'payload\Bin64\FrameGenNG.ini'
     $checks = foreach ($target in @($state.targets)) {
         $destination = [string]$target.destination
         $exists = Test-Path -LiteralPath $destination
         $currentHash = if ($exists) { Get-PathSha256 -Path $destination } else { $null }
+        $isRuntimeConfig = [System.IO.Path]::GetFileName($destination).Equals(
+            'FrameGenNG.ini',
+            [System.StringComparison]::OrdinalIgnoreCase
+        )
         $hasInstalledFileRecords = $target.PSObject.Properties.Name -contains 'installedFiles' -and
             $null -ne $target.installedFiles
         $matchesInstalled = if (-not $exists) {
             $false
+        } elseif ($isRuntimeConfig -and (Test-Path -LiteralPath $runtimeConfigReference -PathType Leaf)) {
+            Test-IniSemanticMatch -Path $destination -ReferencePath $runtimeConfigReference
         } elseif ([bool]$target.isDirectory -and $hasInstalledFileRecords) {
             Test-InstalledDirectoryFiles -Path $destination -InstalledFiles $target.installedFiles
         } else {

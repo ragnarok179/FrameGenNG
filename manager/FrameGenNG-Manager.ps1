@@ -24,10 +24,10 @@ function Format-StatusText {
         return "Installed and healthy`r`nVersion $($Status.version) · $($Status.profile) · $($Status.gpu)"
     }
     if ([bool]$Status.stateRecoveredFromBackup) {
-        return "Recovery state loaded`r`nReinstall FrameGenNG to rebuild the primary installation state."
+        return "Recovery state loaded`r`nUse Uninstall, then Install to rebuild the installation state."
     }
     $broken = @($Status.checks | Where-Object { -not $_.matchesInstalled }).Count
-    return "Reinstallation recommended`r`n$broken item(s) missing or modified."
+    return "Installation files changed`r`nUse Uninstall, then Install to restore $broken item(s)."
 }
 
 function Invoke-CommandLineAction {

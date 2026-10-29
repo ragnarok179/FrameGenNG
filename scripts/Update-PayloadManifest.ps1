@@ -24,6 +24,7 @@ $manifest = [pscustomobject][ordered]@{
     }
     files = @($files)
 }
-[System.IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 10), [System.Text.UTF8Encoding]::new($false))
+$json = $manifest | ConvertTo-Json -Depth 10 -Compress
+[System.IO.File]::WriteAllText($manifestPath, $json, [System.Text.UTF8Encoding]::new($false))
 $manifestPath
 
