@@ -885,6 +885,40 @@ function New-FrameGenNGInstallationPlan {
     }
 }
 
+function Test-FrameGenNGRuntimeConfigFile {
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    $signature = '; FrameGenNG production configuration for BeamNG.drive.'
+    return (Get-Content -LiteralPath $Path -TotalCount 1) -ceq $signature
+}
+
+function Remove-ValidatedLegacyUpdateResidue {
+    param([Parameter(Mandatory)]$Plan)
+
+    foreach ($nativeItem in @($Plan.NativeItems)) {
+        $destination = [string]$nativeItem.Destination
+        if (-not (Test-Path -LiteralPath $destination)) { continue }
+
+        $name = [System.IO.Path]::GetFileName($destination)
+        $isOwnedRuntimeConfig = $name.Equals(
+            'FrameGenNG.ini',
+            [System.StringComparison]::OrdinalIgnoreCase
+        ) -and (Test-FrameGenNGRuntimeConfigFile -Path $destination)
+        $isOwnedEngineDirectory = $name.Equals(
+            'FGNGEngine',
+            [System.StringComparison]::OrdinalIgnoreCase
+        ) -and (Test-Path -LiteralPath $destination -PathType Container) -and
+            (Test-InstalledDirectoryFiles -Path $destination -InstalledFiles (
+                Get-DirectoryFileRecords -Path ([string]$nativeItem.Source)
+            ))
+
+        if ($isOwnedRuntimeConfig -or $isOwnedEngineDirectory) {
+            Remove-Item -LiteralPath $destination -Recurse -Force
+        }
+    }
+}
+
 function Assert-FrameGenNGInstallationPlan {
     param([Parameter(Mandatory)]$Plan)
 
@@ -927,6 +961,7 @@ function Install-FrameGenNG {
 
     $gpu = Get-NvidiaRtxProfile -Profile $Profile
     $installationPlan = New-FrameGenNGInstallationPlan -PackageRoot $packageRoot -GameRoot $gameRootResolved -UserRoot $userRoot -Profile $gpu.Profile
+    Remove-ValidatedLegacyUpdateResidue -Plan $installationPlan
     Assert-FrameGenNGInstallationPlan -Plan $installationPlan
     $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $dataRoot = Get-FrameGenNGDataRoot -UserRoot $userRoot

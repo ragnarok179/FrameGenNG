@@ -169,10 +169,14 @@ try {
     $packageBackupRoot = Join-Path $backupParent 'FrameGenNG'
     Write-UpdateLog -Message "Package backup created at $packageBackupRoot."
 
+    Remove-Module FrameGenNG.Core -Force -ErrorAction SilentlyContinue
+
+    $stagedCorePath = Join-Path $stagedPackageRoot 'manager\FrameGenNG.Core.psm1'
+    Import-Module $stagedCorePath -Force
     if ($wasInstalled) {
         Uninstall-FrameGenNG -GameRoot $gameRoot -LauncherIni ([string]$script:Request.launcherIni) -SkipRestorePoint | Out-Null
         $oldUninstalled = $true
-        Write-UpdateLog -Message "Uninstalled v$oldVersion and restored the original game files."
+        Write-UpdateLog -Message "Uninstalled v$oldVersion with the validated v$stagedVersion migration logic and restored the original game files."
     }
     Remove-Module FrameGenNG.Core -Force -ErrorAction SilentlyContinue
 
@@ -186,6 +190,15 @@ try {
     if ($desiredInstalled) {
         Install-FrameGenNG -GameRoot $gameRoot -LauncherIni ([string]$script:Request.launcherIni) -Profile $desiredProfile -SkipRestorePoint | Out-Null
         Set-PreservedFrameGenerationSettings -Snapshot $desiredSettings
+        $installedStatus = Get-FrameGenNGStatus -GameRoot $gameRoot -LauncherIni ([string]$script:Request.launcherIni)
+        if (-not [bool]$installedStatus.installed -or -not [bool]$installedStatus.healthy) {
+            $invalidTargets = if ($installedStatus.PSObject.Properties.Name -contains 'checks') {
+                @($installedStatus.checks | Where-Object { -not $_.matchesInstalled }).Count
+            } else {
+                0
+            }
+            throw "The updated installation failed verification: $invalidTargets item(s) are missing or modified."
+        }
         Write-UpdateLog -Message "Installed v$stagedVersion with profile $desiredProfile and restored the selected Frame Generation settings."
     }
 

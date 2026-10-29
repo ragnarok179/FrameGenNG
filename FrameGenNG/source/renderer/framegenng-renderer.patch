@@ -1,0 +1,795 @@
+diff --git a/FrameGenNGEngine/FrameGenNGEngine.vcxproj b/FrameGenNGEngine/FrameGenNGEngine.vcxproj
+index d171868..1525936 100644
+--- a/FrameGenNGEngine/FrameGenNGEngine.vcxproj
++++ b/FrameGenNGEngine/FrameGenNGEngine.vcxproj
+@@ -109,12 +109,13 @@
+   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+     <ClCompile>
+       <WarningLevel>Level3</WarningLevel>
++      <DebugInformationFormat>OldStyle</DebugInformationFormat>
+       <SDLCheck>true</SDLCheck>
+       <PreprocessorDefinitions>NDEBUG;_DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR;_WINDOWS;_USRDLL;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+       <ConformanceMode>true</ConformanceMode>
+       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+       <FloatingPointModel>Fast</FloatingPointModel>
+-      <MultiProcessorCompilation>true</MultiProcessorCompilation>
++      <MultiProcessorCompilation>false</MultiProcessorCompilation>
+       <LanguageStandard>stdcpplatest</LanguageStandard>
+       <PrecompiledHeader>Use</PrecompiledHeader>
+       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+@@ -850,4 +851,4 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
+   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+   <ImportGroup Label="ExtensionTargets">
+   </ImportGroup>
+-</Project>
+\ No newline at end of file
++</Project>
+diff --git a/FrameGenNGEngine/dllmain.cpp b/FrameGenNGEngine/dllmain.cpp
+index c738e4e..95fa828 100644
+--- a/FrameGenNGEngine/dllmain.cpp
++++ b/FrameGenNGEngine/dllmain.cpp
+@@ -1939,21 +1939,22 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
+         // unhookAdvapi32();
+         // DetachHooks();
+ 
+-        if (skModule != nullptr)
+-            NtdllProxy::FreeLibrary_Ldr(skModule);
++        // When lpReserved is non-null, Windows is terminating the process and will
++        // unload every module itself. Calling FreeLibrary here can re-enter NVIDIA
++        // NGX teardown while its dependencies are already being dismantled.
++        if (lpReserved == nullptr)
++        {
++            if (skModule != nullptr)
++                NtdllProxy::FreeLibrary_Ldr(skModule);
+ 
+-        if (reshadeModule != nullptr)
+-            NtdllProxy::FreeLibrary_Ldr(reshadeModule);
++            if (reshadeModule != nullptr)
++                NtdllProxy::FreeLibrary_Ldr(reshadeModule);
+ 
+-        if (_asiHandles.size() > 0)
+-        {
+-            for (size_t i = 0; i < _asiHandles.size(); i++)
+-                NtdllProxy::FreeLibrary_Ldr(_asiHandles[i]);
+-        }
++            for (const auto asiHandle : _asiHandles)
++                NtdllProxy::FreeLibrary_Ldr(asiHandle);
+ 
+-        for (const PVOID& v : State::Instance().modulesToFree)
+-        {
+-            NtdllProxy::FreeLibrary_Ldr(v);
++            for (const PVOID& moduleHandle : State::Instance().modulesToFree)
++                NtdllProxy::FreeLibrary_Ldr(moduleHandle);
+         }
+ 
+         spdlog::info("");
+diff --git a/FrameGenNGEngine/framegen/dlssg/DLSSG_Dx12.cpp b/FrameGenNGEngine/framegen/dlssg/DLSSG_Dx12.cpp
+index 5d419c6..d248034 100644
+--- a/FrameGenNGEngine/framegen/dlssg/DLSSG_Dx12.cpp
++++ b/FrameGenNGEngine/framegen/dlssg/DLSSG_Dx12.cpp
+@@ -2,6 +2,8 @@
+ 
+ #include "DLSSG_Dx12.h"
+ 
++#include <Config.h>
++
+ #include <hudfix/Hudfix_Dx12.h>
+ #include <hudfix/Hudfix_Dx11.h>
+ 
+@@ -12,6 +14,39 @@
+ 
+ #include <magic_enum.hpp>
+ 
++static void ApplyForcedHdr10ColorSpace(IDXGISwapChain* swapChain)
++{
++    if (swapChain == nullptr || !Config::Instance()->ForceHDR.value_or_default() ||
++        !Config::Instance()->UseHDR10.value_or_default())
++        return;
++
++    IDXGISwapChain3* swapChain3 = nullptr;
++    if (FAILED(swapChain->QueryInterface(IID_PPV_ARGS(&swapChain3))) || swapChain3 == nullptr)
++    {
++        LOG_ERROR("ForceHDR10: DLSSG swapchain does not expose IDXGISwapChain3");
++        return;
++    }
++
++    constexpr auto hdr10ColorSpace = DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
++    UINT support = 0;
++    const auto supportResult = swapChain3->CheckColorSpaceSupport(hdr10ColorSpace, &support);
++    if (FAILED(supportResult) || (support & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT) == 0)
++    {
++        LOG_ERROR("ForceHDR10: DLSSG swapchain does not support HDR10 color space, result: {:X}, flags: {:X}",
++                  (UINT) supportResult, support);
++        swapChain3->Release();
++        return;
++    }
++
++    const auto setResult = swapChain3->SetColorSpace1(hdr10ColorSpace);
++    if (FAILED(setResult))
++        LOG_ERROR("ForceHDR10: failed to set DLSSG swapchain HDR10 color space: {:X}", (UINT) setResult);
++    else
++        LOG_INFO("ForceHDR10: DLSSG swapchain color space set to HDR10/BT.2100");
++
++    swapChain3->Release();
++}
++
+ HWND DLSSG_Dx12::Hwnd() { return _hwnd; }
+ 
+ bool DLSSG_Dx12::CreateSwapchainInternal(IDXGIFactory* factory, ID3D12CommandQueue* cmdQueue,
+@@ -66,6 +101,8 @@ bool DLSSG_Dx12::CreateSwapchainInternal(IDXGIFactory* factory, ID3D12CommandQue
+         return false;
+     }
+ 
++    ApplyForcedHdr10ColorSpace(*swapChain);
++
+     QueryState();
+ 
+     _gameCommandQueue = cmdQueue;
+@@ -134,6 +171,8 @@ bool DLSSG_Dx12::CreateSwapchain1Internal(IDXGIFactory* factory, ID3D12CommandQu
+         }
+     }
+ 
++    ApplyForcedHdr10ColorSpace(*swapChain);
++
+     QueryState();
+ 
+     _gameCommandQueue = cmdQueue;
+diff --git a/FrameGenNGEngine/hooks/D3D12_Hooks.cpp b/FrameGenNGEngine/hooks/D3D12_Hooks.cpp
+index 31fe0f9..af4a557 100644
+--- a/FrameGenNGEngine/hooks/D3D12_Hooks.cpp
++++ b/FrameGenNGEngine/hooks/D3D12_Hooks.cpp
+@@ -15,6 +15,7 @@
+ #include <proxies/Streamline_Proxy.h>
+ #include <proxies/KernelBase_Proxy.h>
+ #include <hooks/Reflex_Hooks.h>
++#include <hooks/FG_Hooks.h>
+ 
+ #include <detours/detours.h>
+ 
+diff --git a/FrameGenNGEngine/hooks/DxgiFactory_WrappedCalls.cpp b/FrameGenNGEngine/hooks/DxgiFactory_WrappedCalls.cpp
+index 620960d..86c436e 100644
+--- a/FrameGenNGEngine/hooks/DxgiFactory_WrappedCalls.cpp
++++ b/FrameGenNGEngine/hooks/DxgiFactory_WrappedCalls.cpp
+@@ -29,6 +29,66 @@ static bool ShouldCreateDx11wDx12Swapchain()
+            State::Instance().activeFgInput != FGInput::NvngxFG;
+ }
+ 
++static void ApplyForcedHdr10Format(DXGI_SWAP_CHAIN_DESC& desc)
++{
++    if (desc.BufferDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
++    {
++        LOG_INFO("BeamNG HDR probe: factory observed FP16 scRGB swapchain");
++        if (Config::Instance()->ForceHDR.value_or_default() && Config::Instance()->UseHDR10.value_or_default())
++        {
++            LOG_INFO("ForceHDR10: replacing FP16 scRGB swapchain format before creation");
++            desc.BufferDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
++        }
++    }
++}
++
++static void ApplyForcedHdr10Format(DXGI_SWAP_CHAIN_DESC1& desc)
++{
++    if (desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
++    {
++        LOG_INFO("BeamNG HDR probe: factory observed FP16 scRGB swapchain1");
++        if (Config::Instance()->ForceHDR.value_or_default() && Config::Instance()->UseHDR10.value_or_default())
++        {
++            LOG_INFO("ForceHDR10: replacing FP16 scRGB swapchain format before creation");
++            desc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
++        }
++    }
++}
++
++static void ApplyForcedHdr10ColorSpace(IDXGISwapChain* swapChain, DXGI_FORMAT format)
++{
++    if (swapChain == nullptr || format != DXGI_FORMAT_R10G10B10A2_UNORM ||
++        !Config::Instance()->ForceHDR.value_or_default() ||
++        !Config::Instance()->UseHDR10.value_or_default())
++        return;
++
++    IDXGISwapChain3* swapChain3 = nullptr;
++    if (FAILED(swapChain->QueryInterface(IID_PPV_ARGS(&swapChain3))) || swapChain3 == nullptr)
++    {
++        LOG_ERROR("ForceHDR10: created swapchain does not expose IDXGISwapChain3");
++        return;
++    }
++
++    constexpr auto hdr10ColorSpace = DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
++    UINT support = 0;
++    const auto supportResult = swapChain3->CheckColorSpaceSupport(hdr10ColorSpace, &support);
++    if (FAILED(supportResult) || (support & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT) == 0)
++    {
++        LOG_ERROR("ForceHDR10: HDR10 present is unsupported, result: {:X}, flags: {:X}",
++                  (UINT) supportResult, support);
++        swapChain3->Release();
++        return;
++    }
++
++    const auto setResult = swapChain3->SetColorSpace1(hdr10ColorSpace);
++    if (FAILED(setResult))
++        LOG_ERROR("ForceHDR10: failed to set created swapchain to HDR10/BT.2100: {:X}", (UINT) setResult);
++    else
++        LOG_INFO("ForceHDR10: created R10 swapchain is now HDR10/BT.2100");
++
++    swapChain3->Release();
++}
++
+ static bool PrepareDx12InteropDesc(DXGI_SWAP_CHAIN_DESC& desc)
+ {
+     if (desc.SampleDesc.Count > 1)
+@@ -83,6 +143,8 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChain(IDXGIFactory* realFactory, Wrap
+     if (pDesc != nullptr)
+         memcpy(&localDesc, pDesc, sizeof(DXGI_SWAP_CHAIN_DESC));
+ 
++    ApplyForcedHdr10Format(localDesc);
++
+     if (State::Instance().vulkanCreatingSC)
+     {
+         LOG_WARN("Vulkan is creating swapchain!");
+@@ -223,6 +285,7 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChain(IDXGIFactory* realFactory, Wrap
+ 
+             if (FGSCResult == S_OK)
+             {
++                ApplyForcedHdr10ColorSpace(*ppSwapChain, localDesc.BufferDesc.Format);
+                 State::Instance().currentSwapchainDesc = localDesc;
+                 return FGSCResult;
+             }
+@@ -369,6 +432,7 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChain(IDXGIFactory* realFactory, Wrap
+ 
+         if (result == S_OK)
+         {
++            ApplyForcedHdr10ColorSpace(*ppSwapChain, localDesc.BufferDesc.Format);
+             State::Instance().currentSwapchainDesc = localDesc;
+             State::Instance().swapchainInteropApi = SwapchainInteropApi::None;
+ 
+@@ -434,6 +498,8 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChainForHwnd(IDXGIFactory2* realFacto
+     if (pDesc != nullptr)
+         memcpy(&localDesc, pDesc, sizeof(DXGI_SWAP_CHAIN_DESC1));
+ 
++    ApplyForcedHdr10Format(localDesc);
++
+     static bool firstCall = static_cast<bool>(State::Instance().gameQuirks & GameQuirk::NoFSRFGFirstSwapchain);
+     if (firstCall)
+     {
+@@ -612,6 +678,7 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChainForHwnd(IDXGIFactory2* realFacto
+ 
+             if (FGSCResult == S_OK)
+             {
++                ApplyForcedHdr10ColorSpace((IDXGISwapChain*) *ppSwapChain, localDesc.Format);
+                 ((IDXGISwapChain*) *ppSwapChain)->GetDesc(&State::Instance().currentSwapchainDesc);
+                 return FGSCResult;
+             }
+@@ -769,6 +836,7 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChainForHwnd(IDXGIFactory2* realFacto
+ 
+         if (result == S_OK)
+         {
++            ApplyForcedHdr10ColorSpace((IDXGISwapChain*) *ppSwapChain, localDesc.Format);
+             State::Instance().swapchainInteropApi = SwapchainInteropApi::None;
+ 
+             // check for SL proxy
+diff --git a/FrameGenNGEngine/hooks/FG_Hooks.cpp b/FrameGenNGEngine/hooks/FG_Hooks.cpp
+index 821cafa..152f1b3 100644
+--- a/FrameGenNGEngine/hooks/FG_Hooks.cpp
++++ b/FrameGenNGEngine/hooks/FG_Hooks.cpp
+@@ -24,6 +24,13 @@
+ 
+ #include <d3d12.h>
+ #include <detours/detours.h>
++#include <json.hpp>
++
++#include <chrono>
++#include <cstdlib>
++#include <filesystem>
++#include <fstream>
++#include <string>
+ 
+ #define XEFG_RESOURCE_REF_LIMIT 1
+ 
+@@ -35,6 +42,160 @@ static ID3D12CommandQueue* currentCommandQueue = nullptr;
+ static bool _forcedHdrForXeFG = false;
+ static HANDLE _semaphore = nullptr;
+ 
++namespace
++{
++constexpr auto BeamNGSettingsPollInterval = std::chrono::milliseconds(500);
++constexpr auto BeamNGShutdownSignalPollInterval = std::chrono::milliseconds(10);
++constexpr char BeamNGFGEnabledKey[] = "BeamNGFrameGenerationEnabled";
++constexpr char BeamNGFGMultiplierKey[] = "BeamNGFrameGenerationMultiplier";
++constexpr wchar_t BeamNGShutdownSignalName[] = L"frame_generation_shutdown.signal";
++std::atomic_bool beamNGShutdownRequested = false;
++std::once_flag beamNGShutdownWatcherOnce;
++std::mutex beamNGShutdownTraceMutex;
++
++std::filesystem::path BeamNGSettingsPath()
++{
++    static const auto path = [] {
++        char* localAppData = nullptr;
++        size_t localAppDataLength = 0;
++        if (_dupenv_s(&localAppData, &localAppDataLength, "LOCALAPPDATA") != 0 || localAppData == nullptr)
++            return std::filesystem::path {};
++
++        const std::filesystem::path launcherIni =
++            std::filesystem::path(localAppData) / "BeamNG" / "BeamNG.drive.ini";
++        free(localAppData);
++
++        std::ifstream ini(launcherIni);
++        std::string line;
++        while (std::getline(ini, line))
++        {
++            constexpr char prefix[] = "userFolder =";
++            if (line.rfind(prefix, 0) != 0)
++                continue;
++
++            auto value = line.substr(sizeof(prefix) - 1);
++            const auto first = value.find_first_not_of(" \t\r\n");
++            const auto last = value.find_last_not_of(" \t\r\n");
++            if (first == std::string::npos)
++                break;
++
++            return std::filesystem::path(value.substr(first, last - first + 1)) / "current" / "settings" /
++                   "settings.json";
++        }
++
++        return std::filesystem::path {};
++    }();
++
++    return path;
++}
++
++void TraceBeamNGShutdown(const char* message, bool truncate = false)
++{
++    const auto settingsPath = BeamNGSettingsPath();
++    if (settingsPath.empty())
++        return;
++
++    std::scoped_lock lock(beamNGShutdownTraceMutex);
++    const auto tracePath = settingsPath.parent_path().parent_path() / "temp" / "frame_generation_shutdown.log";
++    std::ofstream trace(tracePath, truncate ? std::ios::trunc : std::ios::app);
++    if (trace)
++        trace << GetTickCount64() << '|' << message << '\n';
++}
++
++void StartBeamNGShutdownWatcher()
++{
++    std::call_once(beamNGShutdownWatcherOnce, [] {
++        const auto settingsPath = BeamNGSettingsPath();
++        if (settingsPath.empty())
++            return;
++
++        const auto signalPath = settingsPath.parent_path().parent_path() / "temp" / BeamNGShutdownSignalName;
++        std::error_code removeError;
++        std::filesystem::remove(signalPath, removeError);
++        TraceBeamNGShutdown("watcher-started", true);
++        std::thread([signalPath] {
++            // BeamNG's beamng.log is buffered and exposes its shutdown line too
++            // late. A GELua onPreExit extension creates this dedicated file while
++            // the D3D12 device and NGX objects are still alive.
++            while (!beamNGShutdownRequested.load(std::memory_order_relaxed))
++            {
++                std::error_code existsError;
++                if (std::filesystem::exists(signalPath, existsError))
++                {
++                    beamNGShutdownRequested.store(true, std::memory_order_release);
++                    TraceBeamNGShutdown("beamng-preexit-signal-observed");
++                    return;
++                }
++
++                std::this_thread::sleep_for(BeamNGShutdownSignalPollInterval);
++            }
++        }).detach();
++    });
++}
++
++void PollBeamNGFrameGenerationSettings(bool force = false)
++{
++    StartBeamNGShutdownWatcher();
++
++    static auto lastPoll = std::chrono::steady_clock::time_point::min();
++    static bool pathLogged = false;
++
++    const auto now = std::chrono::steady_clock::now();
++    if (!force && now - lastPoll < BeamNGSettingsPollInterval)
++        return;
++    lastPoll = now;
++
++    const auto path = BeamNGSettingsPath();
++    if (path.empty())
++        return;
++
++    std::ifstream settingsFile(path);
++    if (!settingsFile)
++        return;
++
++    const auto settings = nlohmann::json::parse(settingsFile, nullptr, false);
++    if (settings.is_discarded() || !settings.is_object())
++        return;
++
++    const auto enabledIt = settings.find(BeamNGFGEnabledKey);
++    const auto multiplierIt = settings.find(BeamNGFGMultiplierKey);
++    if (enabledIt == settings.end() || !enabledIt->is_boolean() || multiplierIt == settings.end() ||
++        !multiplierIt->is_number_integer())
++        return;
++
++    const bool enabled = enabledIt->get<bool>();
++    const int multiplier = std::clamp(multiplierIt->get<int>(), 2, 4);
++    const int interpolationCount = multiplier - 1;
++    auto* config = Config::Instance();
++
++    const bool enabledChanged = config->IsFGEnabled() != enabled;
++    const bool multiplierChanged = config->FGDLSSGInterpolationCount.value_or_default() != interpolationCount;
++    if (!enabledChanged && !multiplierChanged)
++        return;
++
++    config->FGEnabled.set_volatile_value(enabled);
++    config->FGDLSSGInterpolationCount.set_volatile_value(interpolationCount);
++    State::Instance().fgChanged = true;
++
++    if (!pathLogged)
++    {
++        LOG_INFO("BeamNG frame-generation settings connected to {}", path.string());
++        pathLogged = true;
++    }
++    LOG_INFO("BeamNG frame-generation settings applied: enabled={}, multiplier={}x", enabled, multiplier);
++}
++} // namespace
++
++bool FGHooks::BeamNGShutdownRequested()
++{
++    return beamNGShutdownRequested.load(std::memory_order_acquire);
++}
++
++void FGHooks::TraceBeamNGShutdownEvent(const char* message)
++{
++    TraceBeamNGShutdown(message);
++}
++
+ #if (XEFG_RESOURCE_REF_LIMIT == 0)
+ inline static std::vector<void*> oldBackBuffers;
+ #endif
+@@ -124,6 +285,8 @@ static bool RefuseUnderGameFsrFg()
+ 
+ static bool CheckForFGStatus()
+ {
++    PollBeamNGFrameGenerationSettings(true);
++
+     // Need to check overlay menu parameter, goes to places it shouldn't go
+     // if (!Config::Instance()->OverlayMenu.value_or_default())
+     //    return false;
+@@ -242,6 +405,13 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
+             pDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+         }
+ 
++        if (pDesc->BufferDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT &&
++            Config::Instance()->ForceHDR.value_or_default() && Config::Instance()->UseHDR10.value_or_default())
++        {
++            LOG_INFO("ForceHDR10: replacing FG swapchain FP16/scRGB format before creation");
++            pDesc->BufferDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
++        }
++
+         scResult = fg->CreateSwapchain(pFactory, cq, pDesc, ppSwapChain, true);
+ 
+         // Looks like game is creating new swapchain,
+@@ -356,6 +526,13 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
+             pDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+         }
+ 
++        if (pDesc->Format == DXGI_FORMAT_R16G16B16A16_FLOAT && Config::Instance()->ForceHDR.value_or_default() &&
++            Config::Instance()->UseHDR10.value_or_default())
++        {
++            LOG_INFO("ForceHDR10: replacing FG swapchain1 FP16/scRGB format before creation");
++            pDesc->Format = DXGI_FORMAT_R10G10B10A2_UNORM;
++        }
++
+         scResult = fg->CreateSwapchain1(pFactory, cq, hWnd, pDesc, pFullscreenDesc, ppSwapChain, true);
+ 
+         // Looks like game is creating new swapchain,
+@@ -464,6 +641,8 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
+     o_FGSCGetFullscreenDesc = (PFN_GetFullscreenDesc) pFactoryVTable[19];
+     o_FGSCPresent1 = (PFN_Present1) pFactoryVTable[22];
+     o_FGSCGetFrameLatencyWaitableObject = (PFN_GetFrameLatencyWaitableObject) pFactoryVTable[33];
++    o_FGSCCheckColorSpaceSupport = (PFN_CheckColorSpaceSupport) pFactoryVTable[37];
++    o_FGSCSetColorSpace1 = (PFN_SetColorSpace1) pFactoryVTable[38];
+     o_FGSCResizeBuffers1 = (PFN_ResizeBuffers1) pFactoryVTable[39];
+ 
+     if (o_FGSCPresent != nullptr)
+@@ -477,6 +656,8 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
+         LOG_TRACE("FGSCResizeTarget: {:X}", (size_t) o_FGSCResizeTarget);
+         LOG_TRACE("FGSCGetFullscreenDesc: {:X}", (size_t) o_FGSCGetFullscreenDesc);
+         LOG_TRACE("FGSCPresent1: {:X}", (size_t) o_FGSCPresent1);
++        LOG_TRACE("FGSCCheckColorSpaceSupport: {:X}", (size_t) o_FGSCCheckColorSpaceSupport);
++        LOG_TRACE("FGSCSetColorSpace1: {:X}", (size_t) o_FGSCSetColorSpace1);
+         LOG_TRACE("FGSCResizeBuffers1: {:X}", (size_t) o_FGSCResizeBuffers1);
+         LOG_TRACE("FGSCGetFrameLatencyWaitableObject: {:X}", (size_t) o_FGSCGetFrameLatencyWaitableObject);
+ 
+@@ -495,6 +676,12 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
+         if (o_FGSCResizeBuffers1 != nullptr)
+             DetourAttach(&(PVOID&) o_FGSCResizeBuffers1, hkResizeBuffers1);
+ 
++        if (o_FGSCCheckColorSpaceSupport != nullptr)
++            DetourAttach(&(PVOID&) o_FGSCCheckColorSpaceSupport, hkCheckColorSpaceSupport);
++
++        if (o_FGSCSetColorSpace1 != nullptr)
++            DetourAttach(&(PVOID&) o_FGSCSetColorSpace1, hkSetColorSpace1);
++
+         if (State::Instance().activeFgOutput == FGOutput::XeFG)
+         {
+             if (o_FGSCGetFullscreenState != nullptr)
+@@ -524,6 +711,8 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
+             o_FGSCResizeTarget = nullptr;
+             o_FGSCGetFullscreenDesc = nullptr;
+             o_FGSCPresent1 = nullptr;
++            o_FGSCCheckColorSpaceSupport = nullptr;
++            o_FGSCSetColorSpace1 = nullptr;
+             o_FGSCResizeBuffers1 = nullptr;
+             o_FGSCGetFrameLatencyWaitableObject = nullptr;
+         }
+@@ -669,6 +858,16 @@ HRESULT FGHooks::hkGetFullscreenState(IDXGISwapChain* This, BOOL* pFullscreen, I
+ HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat,
+                                  UINT SwapChainFlags)
+ {
++    if (NewFormat == DXGI_FORMAT_R16G16B16A16_FLOAT)
++    {
++        LOG_INFO("BeamNG HDR probe: FG ResizeBuffers observed FP16, {}x{}, buffers {}", Width, Height, BufferCount);
++        if (Config::Instance()->ForceHDR.value_or_default() && Config::Instance()->UseHDR10.value_or_default())
++        {
++            LOG_INFO("ForceHDR10: replacing FG ResizeBuffers FP16/scRGB format");
++            NewFormat = DXGI_FORMAT_R10G10B10A2_UNORM;
++        }
++    }
++
+     // Skip XeFG's internal call
+     if (_skipResize)
+     {
+@@ -914,6 +1113,16 @@ HRESULT FGHooks::hkResizeTarget(IDXGISwapChain* This, const DXGI_MODE_DESC* pNew
+ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT Format,
+                                   UINT SwapChainFlags, const UINT* pCreationNodeMask, IUnknown* const* ppPresentQueue)
+ {
++    if (Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
++    {
++        LOG_INFO("BeamNG HDR probe: FG ResizeBuffers1 observed FP16, {}x{}, buffers {}", Width, Height, BufferCount);
++        if (Config::Instance()->ForceHDR.value_or_default() && Config::Instance()->UseHDR10.value_or_default())
++        {
++            LOG_INFO("ForceHDR10: replacing FG ResizeBuffers1 FP16/scRGB format");
++            Format = DXGI_FORMAT_R10G10B10A2_UNORM;
++        }
++    }
++
+     // Skip XeFG's internal call
+     if (_skipResize1)
+     {
+@@ -1141,6 +1350,39 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT
+     return result;
+ }
+ 
++HRESULT FGHooks::hkCheckColorSpaceSupport(IDXGISwapChain3* This, DXGI_COLOR_SPACE_TYPE ColorSpace,
++                                          UINT* pColorSpaceSupport)
++{
++    const auto result = o_FGSCCheckColorSpaceSupport(This, ColorSpace, pColorSpaceSupport);
++
++    if (ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709 ||
++        ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020)
++    {
++        LOG_INFO("BeamNG HDR probe: FG CheckColorSpaceSupport color {}, support {}, result {:X}", (UINT) ColorSpace,
++                 pColorSpaceSupport != nullptr ? *pColorSpaceSupport : 0, (UINT) result);
++    }
++
++    return result;
++}
++
++HRESULT FGHooks::hkSetColorSpace1(IDXGISwapChain3* This, DXGI_COLOR_SPACE_TYPE ColorSpace)
++{
++    if (ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709 ||
++        ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020)
++    {
++        LOG_INFO("BeamNG HDR probe: FG SetColorSpace1 color {}", (UINT) ColorSpace);
++    }
++
++    if (ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709 && Config::Instance()->ForceHDR.value_or_default() &&
++        Config::Instance()->UseHDR10.value_or_default())
++    {
++        LOG_INFO("ForceHDR10: replacing FG scRGB color space with HDR10/BT.2100");
++        ColorSpace = DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
++    }
++
++    return o_FGSCSetColorSpace1(This, ColorSpace);
++}
++
+ HRESULT FGHooks::hkFGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags)
+ {
+     // Skip XeFG's internal call
+@@ -1212,6 +1454,8 @@ HRESULT FGHooks::hkFGPresent1(IDXGISwapChain1* This, UINT SyncInterval, UINT Fla
+ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
+                            const DXGI_PRESENT_PARAMETERS* pPresentParameters)
+ {
++    PollBeamNGFrameGenerationSettings();
++
+     _lastPresentFlags = Flags;
+ 
+     auto& state = State::Instance();
+diff --git a/FrameGenNGEngine/hooks/FG_Hooks.h b/FrameGenNGEngine/hooks/FG_Hooks.h
+index 6da5b76..9298897 100644
+--- a/FrameGenNGEngine/hooks/FG_Hooks.h
++++ b/FrameGenNGEngine/hooks/FG_Hooks.h
+@@ -24,6 +24,12 @@ class FGHooks
+     static void ClearDx12InteropPresentSC(IUnknown* pSwapChain);
+     static bool IsDx12InteropPresentSC(IUnknown* pSwapChain);
+ 
++    // BeamNG writes its shutdown marker before it starts tearing down NGX/D3D12.
++    // Native NGX teardown is unsafe after this point; Windows will reclaim those
++    // resources when the process exits.
++    static bool BeamNGShutdownRequested();
++    static void TraceBeamNGShutdownEvent(const char* message);
++
+   private:
+     using PFN_Present = rewrite_signature<decltype(&IDXGISwapChain::Present)>::type;
+     using PFN_Present1 = rewrite_signature<decltype(&IDXGISwapChain1::Present1)>::type;
+@@ -32,6 +38,9 @@ class FGHooks
+     using PFN_GetFullscreenDesc = rewrite_signature<decltype(&IDXGISwapChain1::GetFullscreenDesc)>::type;
+     using PFN_ResizeBuffers = rewrite_signature<decltype(&IDXGISwapChain::ResizeBuffers)>::type;
+     using PFN_ResizeBuffers1 = rewrite_signature<decltype(&IDXGISwapChain3::ResizeBuffers1)>::type;
++    using PFN_CheckColorSpaceSupport =
++        rewrite_signature<decltype(&IDXGISwapChain3::CheckColorSpaceSupport)>::type;
++    using PFN_SetColorSpace1 = rewrite_signature<decltype(&IDXGISwapChain3::SetColorSpace1)>::type;
+     using PFN_ResizeTarget = rewrite_signature<decltype(&IDXGISwapChain::ResizeTarget)>::type;
+     using PFN_GetFrameLatencyWaitableObject =
+         rewrite_signature<decltype(&IDXGISwapChain2::GetFrameLatencyWaitableObject)>::type;
+@@ -40,6 +49,8 @@ class FGHooks
+     inline static PFN_ResizeBuffers o_FGSCResizeBuffers = nullptr;
+     inline static PFN_ResizeTarget o_FGSCResizeTarget = nullptr;
+     inline static PFN_ResizeBuffers1 o_FGSCResizeBuffers1 = nullptr;
++    inline static PFN_CheckColorSpaceSupport o_FGSCCheckColorSpaceSupport = nullptr;
++    inline static PFN_SetColorSpace1 o_FGSCSetColorSpace1 = nullptr;
+     inline static PFN_SetFullscreenState o_FGSCSetFullscreenState = nullptr;
+     inline static PFN_GetFullscreenState o_FGSCGetFullscreenState = nullptr;
+     inline static PFN_GetFullscreenDesc o_FGSCGetFullscreenDesc = nullptr;
+@@ -69,6 +80,9 @@ class FGHooks
+     static HRESULT hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT Width, UINT Height,
+                                     DXGI_FORMAT Format, UINT SwapChainFlags, const UINT* pCreationNodeMask,
+                                     IUnknown* const* ppPresentQueue);
++    static HRESULT hkCheckColorSpaceSupport(IDXGISwapChain3* This, DXGI_COLOR_SPACE_TYPE ColorSpace,
++                                            UINT* pColorSpaceSupport);
++    static HRESULT hkSetColorSpace1(IDXGISwapChain3* This, DXGI_COLOR_SPACE_TYPE ColorSpace);
+     static ULONG hkFGRelease(IUnknown* This);
+ 
+     static HRESULT hkFGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags);
+@@ -86,6 +100,8 @@ class FGHooks
+     VALIDATE_MEMBER_HOOK(hkGetFullscreenDesc, PFN_GetFullscreenDesc)
+     VALIDATE_MEMBER_HOOK(hkResizeBuffers, PFN_ResizeBuffers)
+     VALIDATE_MEMBER_HOOK(hkResizeBuffers1, PFN_ResizeBuffers1)
++    VALIDATE_MEMBER_HOOK(hkCheckColorSpaceSupport, PFN_CheckColorSpaceSupport)
++    VALIDATE_MEMBER_HOOK(hkSetColorSpace1, PFN_SetColorSpace1)
+     VALIDATE_MEMBER_HOOK(hkResizeTarget, PFN_ResizeTarget)
+     VALIDATE_MEMBER_HOOK(hkGetFrameLatencyWaitableObject, PFN_GetFrameLatencyWaitableObject)
+     VALIDATE_MEMBER_HOOK(hkFGRelease, PFN_Release)
+diff --git a/FrameGenNGEngine/inputs/NVNGX_DLSS_Dx12.cpp b/FrameGenNGEngine/inputs/NVNGX_DLSS_Dx12.cpp
+index 682ac48..8d9d346 100644
+--- a/FrameGenNGEngine/inputs/NVNGX_DLSS_Dx12.cpp
++++ b/FrameGenNGEngine/inputs/NVNGX_DLSS_Dx12.cpp
+@@ -17,6 +17,7 @@
+ #include <imgui/ImGuiNotify.hpp>
+ 
+ #include <hooks/D3D12_Hooks.h>
++#include <hooks/FG_Hooks.h>
+ 
+ #include <dxgi1_4.h>
+ #include <shared_mutex>
+@@ -369,6 +370,17 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D12_Init_with_ProjectID(
+ 
+ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D12_Shutdown(void)
+ {
++    if (FGHooks::BeamNGShutdownRequested())
++    {
++        shutdown = true;
++        State::Instance().nvngxDx12Inited = false;
++        State::Instance().currentFeature = nullptr;
++        D3D12Device = nullptr;
++        NVNGXProxy::SetDx12Inited(false);
++        FGHooks::TraceBeamNGShutdownEvent("native-ngx-shutdown-skipped-at-process-exit");
++        return NVSDK_NGX_Result_Success;
++    }
++
+     shutdown = true;
+     State::Instance().nvngxDx12Inited = false;
+ 
+@@ -428,6 +440,17 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D12_Shutdown(void)
+ 
+ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D12_Shutdown1(ID3D12Device* InDevice)
+ {
++    if (FGHooks::BeamNGShutdownRequested())
++    {
++        shutdown = true;
++        State::Instance().nvngxDx12Inited = false;
++        State::Instance().currentFeature = nullptr;
++        D3D12Device = nullptr;
++        NVNGXProxy::SetDx12Inited(false);
++        FGHooks::TraceBeamNGShutdownEvent("native-ngx-shutdown1-skipped-at-process-exit");
++        return NVSDK_NGX_Result_Success;
++    }
++
+     shutdown = true;
+     State::Instance().nvngxDx12Inited = false;
+ 
+@@ -820,6 +843,12 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D12_ReleaseFeature(NVSDK_NGX_Handle*
+     if (!InHandle)
+         return NVSDK_NGX_Result_Success;
+ 
++    if (FGHooks::BeamNGShutdownRequested())
++    {
++        FGHooks::TraceBeamNGShutdownEvent("native-ngx-release-feature-skipped-at-process-exit");
++        return NVSDK_NGX_Result_Success;
++    }
++
+     auto handleId = InHandle->Id;
+ 
+     // Clean up framegen
+diff --git a/FrameGenNGEngine/misc/GameConfigs.cpp b/FrameGenNGEngine/misc/GameConfigs.cpp
+index db54720..af73169 100644
+--- a/FrameGenNGEngine/misc/GameConfigs.cpp
++++ b/FrameGenNGEngine/misc/GameConfigs.cpp
+@@ -140,7 +140,7 @@ const std::vector<GameConfig> gameConfigs = {
+     // Spoofing not required for DLSS inputs for both Dx12 and Vk
+     {
+         .exes = { "beamng.drive.x64.exe" },
+-        .defaults = { DxgiSpoofing = false },
++        .defaults = { DxgiSpoofing = false, FGPreserveSwapChain = false },
+     },
+ 
+     // Red Dead Redemption 2
+diff --git a/FrameGenNGEngine/wrapped/wrapped_swapchain.cpp b/FrameGenNGEngine/wrapped/wrapped_swapchain.cpp
+index dc70036..22b9382 100644
+--- a/FrameGenNGEngine/wrapped/wrapped_swapchain.cpp
++++ b/FrameGenNGEngine/wrapped/wrapped_swapchain.cpp
+@@ -867,6 +867,15 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::GetDesc(DXGI_SWAP_CHAIN_DESC*
+ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers(UINT BufferCount, UINT Width, UINT Height,
+                                                                 DXGI_FORMAT NewFormat, UINT SwapChainFlags)
+ {
++    if (NewFormat == DXGI_FORMAT_R16G16B16A16_FLOAT)
++    {
++        LOG_INFO("BeamNG HDR probe: ResizeBuffers observed FP16 scRGB");
++        if (Config::Instance()->ForceHDR.value_or_default() && Config::Instance()->UseHDR10.value_or_default())
++        {
++            LOG_INFO("ForceHDR10: replacing FP16 scRGB format before ResizeBuffers");
++            NewFormat = DXGI_FORMAT_R10G10B10A2_UNORM;
++        }
++    }
+     LOG_DEBUG("");
+ 
+ #ifdef USE_LOCAL_MUTEX
+@@ -1241,6 +1250,21 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::CheckColorSpaceSupport(DXGI_CO
+ 
+ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::SetColorSpace1(DXGI_COLOR_SPACE_TYPE ColorSpace)
+ {
++    DXGI_SWAP_CHAIN_DESC desc {};
++    const bool isPrototypeHdr10Swapchain =
++        SUCCEEDED(_real->GetDesc(&desc)) && desc.BufferDesc.Format == DXGI_FORMAT_R10G10B10A2_UNORM;
++
++    if (ColorSpace == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709)
++    {
++        LOG_INFO("BeamNG HDR probe: SetColorSpace1 observed scRGB, swapchain format: {}", (UINT) desc.BufferDesc.Format);
++        if (isPrototypeHdr10Swapchain && Config::Instance()->ForceHDR.value_or_default() &&
++            Config::Instance()->UseHDR10.value_or_default())
++        {
++            LOG_INFO("ForceHDR10: replacing scRGB color space with HDR10/BT.2100");
++            ColorSpace = DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
++        }
++    }
++
+     auto result = _real3->SetColorSpace1(ColorSpace);
+ 
+     if (SUCCEEDED(result))
+@@ -1262,6 +1286,15 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers1(UINT BufferCoun
+                                                                  const UINT* pCreationNodeMask,
+                                                                  IUnknown* const* ppPresentQueue)
+ {
++    if (Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
++    {
++        LOG_INFO("BeamNG HDR probe: ResizeBuffers1 observed FP16 scRGB");
++        if (Config::Instance()->ForceHDR.value_or_default() && Config::Instance()->UseHDR10.value_or_default())
++        {
++            LOG_INFO("ForceHDR10: replacing FP16 scRGB format before ResizeBuffers1");
++            Format = DXGI_FORMAT_R10G10B10A2_UNORM;
++        }
++    }
+     LOG_DEBUG("");
+ 
+ #ifdef USE_LOCAL_MUTEX

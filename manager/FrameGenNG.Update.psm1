@@ -266,13 +266,13 @@ function Save-FrameGenNGUpdatePackage {
 
 function Start-FrameGenNGUpdateHelper {
     param(
-        [Parameter(Mandatory)][string]$PackageRoot,
+        [Parameter(Mandatory)][string]$HelperPackageRoot,
         [Parameter(Mandatory)][string]$WorkRoot,
         [Parameter(Mandatory)]$Request
     )
 
     $helperPath = Join-Path $WorkRoot 'FrameGenNG-Updater.ps1'
-    Copy-Item -LiteralPath (Join-Path $PackageRoot 'manager\FrameGenNG-Updater.ps1') -Destination $helperPath -Force
+    Copy-Item -LiteralPath (Join-Path $HelperPackageRoot 'manager\FrameGenNG-Updater.ps1') -Destination $helperPath -Force
 
     $requestPath = Join-Path $WorkRoot 'update-request.json'
     $requestJson = $Request | ConvertTo-Json -Depth 20
@@ -312,7 +312,7 @@ function Start-FrameGenNGUpdate {
             restartManager = $true
             silent = $false
         }
-        return Start-FrameGenNGUpdateHelper -PackageRoot $PackageRoot -WorkRoot $workRoot -Request $request
+        return Start-FrameGenNGUpdateHelper -HelperPackageRoot ([string]$download.PackageRoot) -WorkRoot $workRoot -Request $request
     } catch {
         if (Test-Path -LiteralPath $workRoot) { Remove-Item -LiteralPath $workRoot -Recurse -Force }
         throw
@@ -369,7 +369,7 @@ function Start-FrameGenNGRestore {
             restartManager = $true
             silent = $false
         }
-        return Start-FrameGenNGUpdateHelper -PackageRoot $PackageRoot -WorkRoot $workRoot -Request $request
+        return Start-FrameGenNGUpdateHelper -HelperPackageRoot $stagedPackageRoot -WorkRoot $workRoot -Request $request
     } catch {
         if (Test-Path -LiteralPath $workRoot) { Remove-Item -LiteralPath $workRoot -Recurse -Force }
         throw
