@@ -35,7 +35,7 @@ A GELua extension writes a signal during `onPreExit`. The DLL observes it before
 
 The manager applies changes as a transaction: validate every payload hash, reject proxy and HDR-override collisions, back up existing user overrides, generate the shader and interface overrides from the current vanilla files, invalidate BeamNG's rendering shader cache, then record installation state. Uninstall removes the generated override and invalidates the same disposable cache. If a step fails, already changed targets are restored. The state records SHA-256 hashes and is duplicated inside its backup folder so uninstall can recover from a missing primary state file.
 
-FrameGenNG does not infer whether BeamNG was updated. The user starts **Reinstall after update**, which removes the previous integration and creates a fresh baseline from the current BeamNG files. Legacy installation states that modified a game file are still removed conservatively: a game file changed outside FrameGenNG is preserved instead of being replaced by an older backup.
+FrameGenNG does not infer whether BeamNG was updated. The user starts **Reinstall after game update**, which removes the previous integration and creates a fresh baseline from the current BeamNG files. Legacy installation states that modified a game file are still removed conservatively: a game file changed outside FrameGenNG is preserved instead of being replaced by an older backup.
 
 The rendering layer starts with Frame Generation disabled. Valid BeamNG settings enable it after startup; missing or invalid settings therefore leave BeamNG without Frame Generation instead of enabling an uncontrolled default.
 
@@ -49,7 +49,7 @@ After download, FrameGenNG validates the checksum, optional GitHub asset digest,
 
 Durable restore points live under `FrameGenNG\restore-points` in the BeamNG user folder. Each point contains English metadata and a SHA-256-protected package snapshot, together with the recorded install/profile state, BeamNG executable identity, and Frame Generation settings. Automatic points are created before installation, reinstall, update, uninstall, and restore. A restore operation first creates another safety point, then uses the same transactional package-swap and rollback path as an update.
 
-The manager retains the five newest automatic points. Manual points are kept until the user deletes them, with a limit of ten to prevent accidental unbounded growth. Short-lived package rollback copies are removed after a successful transaction, while obsolete technical install/recovery backups are capped separately. Restore is refused when the current BeamNG executable differs from the snapshot identity; **Reinstall after update** is the correct path after a game update.
+The manager retains the five newest automatic points. Manual points are kept until the user deletes them, with a limit of ten to prevent accidental unbounded growth. Short-lived package rollback copies are removed after a successful transaction, while obsolete technical install/recovery backups are capped separately. Restore is refused when the current BeamNG executable differs from the snapshot identity; **Reinstall after game update** is the correct path after a game update.
 
 ## Diagnostics
 

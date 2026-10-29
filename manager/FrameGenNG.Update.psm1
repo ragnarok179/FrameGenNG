@@ -341,7 +341,7 @@ function Start-FrameGenNGRestore {
         $currentExecutable = Join-Path $GameRoot 'Bin64\BeamNG.drive.x64.exe'
         $currentHash = (Get-FileHash -LiteralPath $currentExecutable -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($currentHash -ne ([string]$RestorePoint.gameIdentity.executableSha256).ToLowerInvariant()) {
-            throw "This restore point was created for BeamNG $($RestorePoint.gameIdentity.version). The current game executable is different. Use Reinstall after update with the current FrameGenNG version instead."
+            throw "This restore point was created for BeamNG $($RestorePoint.gameIdentity.version). The current game executable is different. Use Reinstall after game update with the current FrameGenNG version instead."
         }
     }
 

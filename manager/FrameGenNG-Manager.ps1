@@ -116,8 +116,8 @@ function New-ActionButton {
 }
 
 $installButton = New-ActionButton -Text 'Install' -X 31 -Width 78 -BackColor $colors.Accent
-$reinstallButton = New-ActionButton -Text 'Reinstall after update' -X 117 -Width 154 -BackColor $colors.PanelRaised
-$uninstallButton = New-ActionButton -Text 'Uninstall' -X 279 -Width 80 -BackColor $colors.PanelRaised
+$reinstallButton = New-ActionButton -Text 'Reinstall after game update' -X 117 -Width 162 -BackColor $colors.PanelRaised
+$uninstallButton = New-ActionButton -Text 'Uninstall' -X 287 -Width 72 -BackColor $colors.PanelRaised
 $form.Controls.AddRange(@($installButton, $reinstallButton, $uninstallButton))
 
 $updateButton = New-FrameGenNGButton -Text 'Check for updates' -X 31 -Y $initialLayout.UpdateTop -Width 328 -Height 30 -Colors $colors
@@ -574,7 +574,7 @@ $installButton.Add_Click({
 
 $reinstallButton.Add_Click({
     try {
-        $answer = [System.Windows.Forms.MessageBox]::Show('Use this after BeamNG has been updated. FrameGenNG will preserve your settings, remove its current integration, then rebuild it from the current game files. If the new game files are unsupported, BeamNG will be left without FrameGenNG. Continue?', 'Reinstall FrameGenNG after update', 'YesNo', 'Question')
+        $answer = [System.Windows.Forms.MessageBox]::Show('Use this after BeamNG has been updated. FrameGenNG will preserve your settings, remove its current integration, then rebuild it from the current game files. If the new game files are unsupported, BeamNG will be left without FrameGenNG. Continue?', 'Reinstall FrameGenNG after game update', 'YesNo', 'Question')
         if ($answer -ne 'Yes') { return }
         Set-BusyState -Busy $true
         Write-ManagerLog -Message 'Reinstalling from the current BeamNG files…'

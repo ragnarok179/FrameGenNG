@@ -20,8 +20,6 @@ FrameGenNG uses BeamNG's native DLSS input in DirectX 12 and adds adjustable Fra
 - An up-to-date NVIDIA driver; R580 or newer is recommended for the RTX 20/30 compatibility path
 - Enough free VRAM for Frame Generation
 
-FrameGenNG identifies supported RTX hardware from the compute capability reported by the NVIDIA driver. If that information is unavailable, it falls back to explicit, architecture-safe product names. Unknown architectures are rejected instead of receiving a guessed profile.
-
 ## Using Frame Generation
 
 Frame Generation creates additional images between the frames rendered by the game. For example, 60 base FPS at 2× can produce up to 120 displayed FPS, while 30 base FPS at 3× can produce up to 90 displayed FPS.
@@ -47,7 +45,7 @@ Other graphics injectors or wrappers that install their own `dxgi.dll` or `d3d12
 
 ## Safe removal and recovery
 
-The manager keeps BeamNG's installed files untouched. The HDR and interface integrations are installed as user-folder overrides. **Uninstall** removes FrameGenNG and restores pre-existing user overrides without touching unrelated changes. **Reinstall after update** removes the old integration and rebuilds it from the current BeamNG files while preserving the selected Frame Generation state and multiplier.
+The manager keeps BeamNG's installed files untouched. The HDR and interface integrations are installed as user-folder overrides. **Uninstall** removes FrameGenNG and restores pre-existing user overrides without touching unrelated changes. **Reinstall after game update** removes the old integration and rebuilds it from the current BeamNG files while preserving the selected Frame Generation state and multiplier.
 
 Automatic restore points are created before important operations. Open **Restore Points** to create a manual point or return to an earlier compatible FrameGenNG state. Backups are stored under `FrameGenNG\backups` in the BeamNG user folder; do not delete them manually before uninstalling.
 
@@ -57,7 +55,7 @@ Open **Diagnostics** to check the installation. Advanced logging is optional and
 
 ## After a BeamNG update
 
-After every BeamNG update, close the game, open FrameGenNG Manager, and select **Reinstall after update** before starting BeamNG again. FrameGenNG does not try to detect game updates automatically. It removes its previous integration, validates the current game files, creates a new baseline, and stops with FrameGenNG uninstalled if the updated files are not supported.
+After every BeamNG update, close the game, open FrameGenNG Manager, and select **Reinstall after game update** before starting BeamNG again. FrameGenNG does not try to detect game updates automatically. It removes its previous integration, validates the current game files, creates a new baseline, and stops with FrameGenNG uninstalled if the updated files are not supported.
 
 ## Automatic updates
 

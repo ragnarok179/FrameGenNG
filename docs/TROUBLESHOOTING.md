@@ -2,13 +2,13 @@
 
 ## Black screen at startup
 
-Close the game with Alt+F4, open the manager, and select **Reinstall after update**. Confirm that BeamNG starts in DirectX 12. Do not place a second `dxgi.dll` or `d3d12.dll` proxy next to FrameGenNG.
+Close the game with Alt+F4, open the manager, and select **Reinstall after game update**. Confirm that BeamNG starts in DirectX 12. Do not place a second `dxgi.dll` or `d3d12.dll` proxy next to FrameGenNG.
 
 ## Incorrect, washed-out, or oversaturated colors
 
 FrameGenNG selects the presentation path automatically. SDR is preserved unless Windows HDR is active and BeamNG requests HDR at the same time. Do not manually change `ForceHDR`, `UseHDR10`, or `SkipColorSpace` in `Bin64\FrameGenNG.ini`.
 
-Fully close and restart BeamNG after changing Windows HDR. If the image remains incorrect, select **Reinstall after update** in the manager to restore the production configuration and rebuild BeamNG's disposable rendering shader cache. Export a diagnostic bundle if the problem continues.
+Fully close and restart BeamNG after changing Windows HDR. If the image remains incorrect, select **Reinstall after game update** in the manager to restore the production configuration and rebuild BeamNG's disposable rendering shader cache. Export a diagnostic bundle if the problem continues.
 
 ## Frame Generation does not activate
 
@@ -32,13 +32,13 @@ Close BeamNG, then run `Uninstall FrameGenNG.cmd`. Restoration uses the state an
 
 ## BeamNG was updated
 
-Before starting the game after an update, open the manager and select **Reinstall after update**. FrameGenNG will preserve its settings, remove the old integration, and rebuild its user-folder overrides from the updated game files.
+Before starting the game after an update, open the manager and select **Reinstall after game update**. FrameGenNG will preserve its settings, remove the old integration, and rebuild its user-folder overrides from the updated game files.
 
 If reinstallation reports that the updated files are incompatible, leave FrameGenNG uninstalled and wait for a compatible release. The manager deliberately leaves BeamNG without FrameGenNG instead of forcing the old integration.
 
 ## Return to an earlier FrameGenNG state
 
-Open **FrameGenNG Manager → Restore Points**, select a compatible point, and choose **Restore selected**. The manager saves the current state before it changes anything. Use this when a mod update completed successfully but causes a problem specific to your setup. Use **Reinstall after update** when BeamNG itself was updated.
+Open **FrameGenNG Manager → Restore Points**, select a compatible point, and choose **Restore selected**. The manager saves the current state before it changes anything. Use this when a mod update completed successfully but causes a problem specific to your setup. Use **Reinstall after game update** when BeamNG itself was updated.
 
 Automatic restore points are limited to the five newest entries. Manual points remain until deleted and are limited to ten. A restore point created for a different BeamNG executable is intentionally blocked.
 
