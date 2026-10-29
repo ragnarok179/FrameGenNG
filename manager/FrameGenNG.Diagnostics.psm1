@@ -77,7 +77,6 @@ function Get-FrameGenNGDiagnosticSummary {
         $health = 'Installed and healthy'
     } else {
         $health = 'Attention required'
-        if ($Status.PSObject.Properties.Name -contains 'gameUpdateDetected' -and [bool]$Status.gameUpdateDetected) { $issues.Add('BeamNG changed after FrameGenNG was installed.') }
         if ($Status.PSObject.Properties.Name -contains 'stateRecoveredFromBackup' -and [bool]$Status.stateRecoveredFromBackup) { $issues.Add('The primary installation state was recovered from its backup.') }
         if ($Status.PSObject.Properties.Name -contains 'checks') {
             foreach ($check in @($Status.checks | Where-Object { -not [bool]$_.matchesInstalled })) { $issues.Add("Missing or modified: $($check.destination)") }

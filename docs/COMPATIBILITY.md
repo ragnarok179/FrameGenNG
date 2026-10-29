@@ -26,7 +26,7 @@ The manager automatically selects an installation profile from the detected GPU 
 - Hardware-accelerated GPU scheduling required
 - an up-to-date NVIDIA driver; R580 or newer is recommended for the RTX 20/30 compatibility path
 
-After a BeamNG update, open FrameGenNG Manager before starting the game. If the manager reports **BeamNG update detected**, select **Repair**. The operation stops without changing the game if that BeamNG version is not compatible.
+After every BeamNG update, close the game and select **Reinstall after update** in FrameGenNG Manager before starting BeamNG again. Game updates are not detected automatically. The operation removes the previous integration, validates the current BeamNG files, and leaves FrameGenNG uninstalled if the updated files are not compatible.
 
 ## Multipliers
 

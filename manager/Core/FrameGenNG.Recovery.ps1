@@ -61,7 +61,7 @@ function New-FrameGenNGRestorePoint {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$UserRoot,
-        [Parameter(Mandatory)][ValidateSet('before-install','before-repair','before-update','before-uninstall','before-restore','manual')][string]$Reason,
+        [Parameter(Mandatory)][ValidateSet('before-install','before-reinstall','before-update','before-uninstall','before-restore','manual')][string]$Reason,
         [string]$Label,
         [string]$GameRoot,
         [string]$LauncherIni
@@ -97,7 +97,7 @@ function New-FrameGenNGRestorePoint {
             createdAt = (Get-Date).ToString('o')
             kind = $kind
             reason = $Reason
-            label = if ([string]::IsNullOrWhiteSpace($Label)) { switch ($Reason) { 'before-install' { 'Before installation' } 'before-repair' { 'Before repair' } 'before-update' { 'Before update' } 'before-uninstall' { 'Before uninstall' } 'before-restore' { 'Before restore' } default { 'Manual restore point' } } } else { $Label.Trim() }
+            label = if ([string]::IsNullOrWhiteSpace($Label)) { switch ($Reason) { 'before-install' { 'Before installation' } 'before-reinstall' { 'Before reinstall' } 'before-update' { 'Before update' } 'before-uninstall' { 'Before uninstall' } 'before-restore' { 'Before restore' } default { 'Manual restore point' } } } else { $Label.Trim() }
             version = Get-FrameGenNGVersion
             installed = $installed
             profile = if ($installed) { [string]$state.profile } else { $null }

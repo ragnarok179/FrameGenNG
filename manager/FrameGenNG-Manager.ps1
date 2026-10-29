@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet('Gui', 'Install', 'Repair', 'Uninstall', 'Status', 'CheckUpdate')]
+    [ValidateSet('Gui', 'Install', 'Reinstall', 'Uninstall', 'Status', 'CheckUpdate')]
     [string]$Action = 'Gui',
     [string]$GameRoot,
     [string]$LauncherIni,
@@ -23,14 +23,11 @@ function Format-StatusText {
     if ([bool]$Status.healthy) {
         return "Installed and healthy`r`nVersion $($Status.version) · $($Status.profile) · $($Status.gpu)"
     }
-    if ([bool]$Status.gameUpdateDetected) {
-        return "BeamNG update detected`r`nRepair FrameGenNG before starting the game."
-    }
     if ([bool]$Status.stateRecoveredFromBackup) {
-        return "Recovery state loaded`r`nRepair FrameGenNG to rebuild the primary installation state."
+        return "Recovery state loaded`r`nReinstall FrameGenNG to rebuild the primary installation state."
     }
     $broken = @($Status.checks | Where-Object { -not $_.matchesInstalled }).Count
-    return "Repair recommended`r`n$broken item(s) missing or modified."
+    return "Reinstallation recommended`r`n$broken item(s) missing or modified."
 }
 
 function Invoke-CommandLineAction {
@@ -39,9 +36,9 @@ function Invoke-CommandLineAction {
             $installationState = Install-FrameGenNG -GameRoot $GameRoot -LauncherIni $LauncherIni -Profile $Profile
             Write-Host "FrameGenNG $($installationState.version) installed with profile $($installationState.profile)." -ForegroundColor Green
         }
-        'Repair' {
-            $installationState = Repair-FrameGenNG -GameRoot $GameRoot -LauncherIni $LauncherIni
-            Write-Host "FrameGenNG $($installationState.version) repaired successfully." -ForegroundColor Green
+        'Reinstall' {
+            $installationState = Reinstall-FrameGenNG -GameRoot $GameRoot -LauncherIni $LauncherIni
+            Write-Host "FrameGenNG $($installationState.version) reinstalled successfully." -ForegroundColor Green
         }
         'Uninstall' {
             $uninstallSummary = Uninstall-FrameGenNG -GameRoot $GameRoot -LauncherIni $LauncherIni
@@ -118,10 +115,10 @@ function New-ActionButton {
     return New-FrameGenNGButton -Text $Text -X $X -Y $initialLayout.ActionTop -Width $Width -Height 30 -Colors $colors -Style Secondary
 }
 
-$installButton = New-ActionButton -Text 'Install' -X 31 -Width 104 -BackColor $colors.Accent
-$repairButton = New-ActionButton -Text 'Repair' -X 143 -Width 104 -BackColor $colors.PanelRaised
-$uninstallButton = New-ActionButton -Text 'Uninstall' -X 255 -Width 104 -BackColor $colors.PanelRaised
-$form.Controls.AddRange(@($installButton, $repairButton, $uninstallButton))
+$installButton = New-ActionButton -Text 'Install' -X 31 -Width 78 -BackColor $colors.Accent
+$reinstallButton = New-ActionButton -Text 'Reinstall after update' -X 117 -Width 154 -BackColor $colors.PanelRaised
+$uninstallButton = New-ActionButton -Text 'Uninstall' -X 279 -Width 80 -BackColor $colors.PanelRaised
+$form.Controls.AddRange(@($installButton, $reinstallButton, $uninstallButton))
 
 $updateButton = New-FrameGenNGButton -Text 'Check for updates' -X 31 -Y $initialLayout.UpdateTop -Width 328 -Height 30 -Colors $colors
 $form.Controls.Add($updateButton)
@@ -181,7 +178,7 @@ function Update-MainLayout {
     $form.SuspendLayout()
     try {
         $statusText.Height = $layout.StatusHeight
-        foreach ($button in @($installButton, $repairButton, $uninstallButton)) {
+        foreach ($button in @($installButton, $reinstallButton, $uninstallButton)) {
             $button.Top = $layout.ActionTop
         }
         $updateButton.Top = $layout.UpdateTop
@@ -207,7 +204,7 @@ function Set-DetailsExpanded {
 
 function Set-BusyState {
     param([bool]$Busy)
-    foreach ($button in @($installButton, $repairButton, $uninstallButton, $diagnosticButton, $updateButton, $restorePointsButton)) {
+    foreach ($button in @($installButton, $reinstallButton, $uninstallButton, $diagnosticButton, $updateButton, $restorePointsButton)) {
         $button.Enabled = -not $Busy
     }
     if (-not $Busy -and $null -ne $script:updateJob) { $updateButton.Enabled = $false }
@@ -340,7 +337,7 @@ function Show-RestorePointsDialog {
     $dialog = New-FrameGenNGDialog -Title 'FrameGenNG Restore Points' -Width 620 -Height 350 -Colors $colors
 
     $intro = New-Object System.Windows.Forms.Label
-    $intro.Text = 'Automatic points are created before install, repair, update, uninstall, and restore. The five newest automatic points are kept; manual points are kept until you delete them.'
+    $intro.Text = 'Automatic points are created before install, reinstall, update, uninstall, and restore. The five newest automatic points are kept; manual points are kept until you delete them.'
     $intro.Location = New-Object System.Drawing.Point(16, 12)
     $intro.Size = New-Object System.Drawing.Size(588, 36)
     $intro.ForeColor = $colors.Muted
@@ -514,17 +511,17 @@ function Refresh-ManagerStatus {
         if (-not [bool]$status.installed) {
             $statusDot.ForeColor = $colors.Muted
             $installButton.Enabled = $true
-            $repairButton.Enabled = $false
+            $reinstallButton.Enabled = $false
             $uninstallButton.Enabled = $false
         } elseif ([bool]$status.healthy) {
             $statusDot.ForeColor = $colors.Success
             $installButton.Enabled = $false
-            $repairButton.Enabled = $true
+            $reinstallButton.Enabled = $true
             $uninstallButton.Enabled = $true
         } else {
             $statusDot.ForeColor = $colors.Warning
             $installButton.Enabled = $false
-            $repairButton.Enabled = $true
+            $reinstallButton.Enabled = $true
             $uninstallButton.Enabled = $true
         }
         return $status
@@ -536,7 +533,7 @@ function Refresh-ManagerStatus {
         $userPathBox.Text = 'Unavailable'
         $gamePathText.Text = 'BeamNG installation could not be detected.'
         $installButton.Enabled = $false
-        $repairButton.Enabled = $false
+        $reinstallButton.Enabled = $false
         $uninstallButton.Enabled = $false
         Write-ManagerLog -Message $_.Exception.Message
         return $null
@@ -564,18 +561,18 @@ $installButton.Add_Click({
     }
 })
 
-$repairButton.Add_Click({
+$reinstallButton.Add_Click({
     try {
-        $answer = [System.Windows.Forms.MessageBox]::Show('Repair preserves your Frame Generation settings, safely removes the current integration, then rebuilds it from the current BeamNG files. Continue?', 'Repair FrameGenNG', 'YesNo', 'Question')
+        $answer = [System.Windows.Forms.MessageBox]::Show('Use this after BeamNG has been updated. FrameGenNG will preserve your settings, remove its current integration, then rebuild it from the current game files. If the new game files are unsupported, BeamNG will be left without FrameGenNG. Continue?', 'Reinstall FrameGenNG after update', 'YesNo', 'Question')
         if ($answer -ne 'Yes') { return }
         Set-BusyState -Busy $true
-        Write-ManagerLog -Message 'Repairing…'
-        Repair-FrameGenNG -GameRoot $script:resolvedGameRoot -LauncherIni $LauncherIni | Out-Null
-        Write-ManagerLog -Message 'Repair complete.'
-        [System.Windows.Forms.MessageBox]::Show('FrameGenNG has been rebuilt for the current BeamNG installation. Your Frame Generation settings were preserved.', 'Repair complete', 'OK', 'Information') | Out-Null
+        Write-ManagerLog -Message 'Reinstalling from the current BeamNG files…'
+        Reinstall-FrameGenNG -GameRoot $script:resolvedGameRoot -LauncherIni $LauncherIni | Out-Null
+        Write-ManagerLog -Message 'Reinstallation complete.'
+        [System.Windows.Forms.MessageBox]::Show('FrameGenNG has been rebuilt from the current BeamNG files. Your Frame Generation settings were preserved.', 'Reinstallation complete', 'OK', 'Information') | Out-Null
     } catch {
         Write-ManagerLog -Message "Error: $($_.Exception.Message)"
-        [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Repair failed', 'OK', 'Error') | Out-Null
+        [System.Windows.Forms.MessageBox]::Show("FrameGenNG could not be reinstalled. The previous integration was removed before the compatibility check, so BeamNG has been left without FrameGenNG when rollback was possible.`r`n`r`n$($_.Exception.Message)", 'Reinstallation failed', 'OK', 'Error') | Out-Null
     } finally {
         Set-BusyState -Busy $false
         Refresh-ManagerStatus | Out-Null
@@ -590,8 +587,7 @@ $uninstallButton.Add_Click({
         Write-ManagerLog -Message 'Restoring original files…'
         $uninstallSummary = Uninstall-FrameGenNG -GameRoot $script:resolvedGameRoot -LauncherIni $LauncherIni
         Write-ManagerLog -Message "Uninstall complete. Backup: $($uninstallSummary.backupKept)"
-        $message = if ([bool]$uninstallSummary.gameUpdateDetected) { 'FrameGenNG has been removed. Files replaced by a BeamNG update were preserved, and recovery copies were kept.' } else { 'FrameGenNG has been uninstalled and the original files were restored.' }
-        [System.Windows.Forms.MessageBox]::Show($message, 'Uninstall complete', 'OK', 'Information') | Out-Null
+        [System.Windows.Forms.MessageBox]::Show('FrameGenNG has been uninstalled. Files changed outside FrameGenNG were preserved and recovery copies were kept.', 'Uninstall complete', 'OK', 'Information') | Out-Null
     } catch {
         Write-ManagerLog -Message "Error: $($_.Exception.Message)"
         [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Uninstall failed', 'OK', 'Error') | Out-Null

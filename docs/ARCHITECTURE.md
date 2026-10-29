@@ -27,15 +27,17 @@ The installer adds two controls below the DLSS settings:
 
 The controls are hidden when DLSS is not selected. The DLL reads the settings at most twice per second. Its separate overlay, shortcuts, splash screen, debugging UI, alternative upscalers, plugin loading, sharpening, output scaling, and magnifier are disabled in the production configuration.
 
-A small, version-checked shader patch can route BeamNG's scRGB output mode through the game's existing HDR10 encoder. The rendering bridge activates this path only when Windows HDR is active and BeamNG requests its HDR output. It otherwise preserves the normal SDR swapchain, including when Windows HDR is active but BeamNG HDR is disabled. This keeps the encoded pixels, swapchain format, and advertised DXGI color space aligned across SDR/HDR changes. Installation stops on an unknown shader layout instead of applying an unverified text replacement.
+A small, version-checked shader override can route BeamNG's scRGB output mode through the game's existing HDR10 encoder. The original shader in the Steam installation is never modified: the generated override is stored at the same relative path in BeamNG's user folder. The rendering bridge activates this path only when Windows HDR is active and BeamNG requests its HDR output. It otherwise preserves the normal SDR swapchain, including when Windows HDR is active but BeamNG HDR is disabled. Installation stops on an unknown vanilla shader layout instead of applying an unverified text replacement.
 
 A GELua extension writes a signal during `onPreExit`. The DLL observes it before D3D12 teardown and avoids unsafe late NGX shutdown calls.
 
 ## Reversible installation
 
-The manager applies changes as a transaction: validate every payload hash, reject proxy collisions, back up existing user overrides and the HDR encoder, copy, patch the shader and interface, invalidate BeamNG's rendering shader cache, then record installation state. Uninstall invalidates the same disposable cache after restoring the vanilla encoder. If a step fails, already changed targets are restored. The state records SHA-256 hashes and is duplicated inside its backup folder so uninstall can recover from a missing primary state file.
+The manager applies changes as a transaction: validate every payload hash, reject proxy and HDR-override collisions, back up existing user overrides, generate the shader and interface overrides from the current vanilla files, invalidate BeamNG's rendering shader cache, then record installation state. Uninstall removes the generated override and invalidates the same disposable cache. If a step fails, already changed targets are restored. The state records SHA-256 hashes and is duplicated inside its backup folder so uninstall can recover from a missing primary state file.
 
-The state also records the BeamNG executable identity and the hashes of the UI sources. A changed identity marks the installation as requiring repair. During removal after a game update, a game file whose content no longer matches the installed mod is preserved instead of being replaced by a backup from the previous BeamNG version.
+FrameGenNG does not infer whether BeamNG was updated. The user starts **Reinstall after update**, which removes the previous integration and creates a fresh baseline from the current BeamNG files. Legacy installation states that modified a game file are still removed conservatively: a game file changed outside FrameGenNG is preserved instead of being replaced by an older backup.
+
+The rendering layer starts with Frame Generation disabled. Valid BeamNG settings enable it after startup; missing or invalid settings therefore leave BeamNG without Frame Generation instead of enabling an uncontrolled default.
 
 ## Update transaction
 
@@ -45,9 +47,9 @@ After download, FrameGenNG validates the checksum, optional GitHub asset digest,
 
 ## Restore points and retention
 
-Durable restore points live under `FrameGenNG\restore-points` in the BeamNG user folder. Each point contains English metadata and a SHA-256-protected package snapshot, together with the recorded install/profile state, BeamNG executable identity, and Frame Generation settings. Automatic points are created before installation, repair, update, uninstall, and restore. A restore operation first creates another safety point, then uses the same transactional package-swap and rollback path as an update.
+Durable restore points live under `FrameGenNG\restore-points` in the BeamNG user folder. Each point contains English metadata and a SHA-256-protected package snapshot, together with the recorded install/profile state, BeamNG executable identity, and Frame Generation settings. Automatic points are created before installation, reinstall, update, uninstall, and restore. A restore operation first creates another safety point, then uses the same transactional package-swap and rollback path as an update.
 
-The manager retains the five newest automatic points. Manual points are kept until the user deletes them, with a limit of ten to prevent accidental unbounded growth. Short-lived package rollback copies are removed after a successful transaction, while obsolete technical install/recovery backups are capped separately. Restore is refused when the current BeamNG executable differs from the snapshot identity; Repair is the correct path after a game update.
+The manager retains the five newest automatic points. Manual points are kept until the user deletes them, with a limit of ten to prevent accidental unbounded growth. Short-lived package rollback copies are removed after a successful transaction, while obsolete technical install/recovery backups are capped separately. Restore is refused when the current BeamNG executable differs from the snapshot identity; **Reinstall after update** is the correct path after a game update.
 
 ## Diagnostics
 

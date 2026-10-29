@@ -9,7 +9,7 @@ https://github.com/optiscaler/OptiScaler
 
 The `framegenng-renderer.patch` file contains the FrameGenNG changes applied to that commit after the upstream project has been locally rebranded as `FrameGenNGEngine`:
 
-- reading FrameGenNG settings from the BeamNG user folder;
+- reading FrameGenNG settings from the configured BeamNG user folder or its Local AppData default;
 - dynamic enable and multiplier selection;
 - presentation-path adaptation for the Frame Generation swapchain;
 - automatic SDR/HDR presentation switching based on Windows HDR and BeamNG's requested output;

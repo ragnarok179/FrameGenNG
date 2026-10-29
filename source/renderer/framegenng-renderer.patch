@@ -369,7 +369,7 @@ index 620960d..98cd55e 100644
  }
  
 diff --git a/FrameGenNGEngine/hooks/FG_Hooks.cpp b/FrameGenNGEngine/hooks/FG_Hooks.cpp
-index 821cafa..512d849 100644
+index 821cafa..02b6468 100644
 --- a/FrameGenNGEngine/hooks/FG_Hooks.cpp
 +++ b/FrameGenNGEngine/hooks/FG_Hooks.cpp
 @@ -1,5 +1,6 @@
@@ -393,7 +393,7 @@ index 821cafa..512d849 100644
  
  #define XEFG_RESOURCE_REF_LIMIT 1
  
-@@ -35,6 +43,208 @@ static ID3D12CommandQueue* currentCommandQueue = nullptr;
+@@ -35,6 +43,210 @@ static ID3D12CommandQueue* currentCommandQueue = nullptr;
  static bool _forcedHdrForXeFG = false;
  static HANDLE _semaphore = nullptr;
  
@@ -468,6 +468,9 @@ index 821cafa..512d849 100644
 +            std::filesystem::path(localAppData) / "BeamNG" / "BeamNG.drive.ini";
 +        free(localAppData);
 +
++        const auto currentSettingsPath =
++            std::filesystem::path("current") / "settings" / "settings.json";
++
 +        std::ifstream ini(launcherIni);
 +        std::string line;
 +        while (std::getline(ini, line))
@@ -482,11 +485,10 @@ index 821cafa..512d849 100644
 +            if (first == std::string::npos)
 +                break;
 +
-+            return std::filesystem::path(value.substr(first, last - first + 1)) / "current" / "settings" /
-+                   "settings.json";
++            return std::filesystem::path(value.substr(first, last - first + 1)) / currentSettingsPath;
 +        }
 +
-+        return std::filesystem::path {};
++        return launcherIni.parent_path() / "BeamNG.drive" / currentSettingsPath;
 +    }();
 +
 +    return path;
@@ -602,7 +604,7 @@ index 821cafa..512d849 100644
  #if (XEFG_RESOURCE_REF_LIMIT == 0)
  inline static std::vector<void*> oldBackBuffers;
  #endif
-@@ -124,6 +334,8 @@ static bool RefuseUnderGameFsrFg()
+@@ -124,6 +336,8 @@ static bool RefuseUnderGameFsrFg()
  
  static bool CheckForFGStatus()
  {
@@ -611,7 +613,7 @@ index 821cafa..512d849 100644
      // Need to check overlay menu parameter, goes to places it shouldn't go
      // if (!Config::Instance()->OverlayMenu.value_or_default())
      //    return false;
-@@ -242,6 +454,9 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
+@@ -242,6 +456,9 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
              pDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
          }
  
@@ -621,7 +623,7 @@ index 821cafa..512d849 100644
          scResult = fg->CreateSwapchain(pFactory, cq, pDesc, ppSwapChain, true);
  
          // Looks like game is creating new swapchain,
-@@ -356,6 +571,8 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
+@@ -356,6 +573,8 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
              pDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
          }
  
@@ -630,7 +632,7 @@ index 821cafa..512d849 100644
          scResult = fg->CreateSwapchain1(pFactory, cq, hWnd, pDesc, pFullscreenDesc, ppSwapChain, true);
  
          // Looks like game is creating new swapchain,
-@@ -464,6 +681,8 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
+@@ -464,6 +683,8 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
      o_FGSCGetFullscreenDesc = (PFN_GetFullscreenDesc) pFactoryVTable[19];
      o_FGSCPresent1 = (PFN_Present1) pFactoryVTable[22];
      o_FGSCGetFrameLatencyWaitableObject = (PFN_GetFrameLatencyWaitableObject) pFactoryVTable[33];
@@ -639,7 +641,7 @@ index 821cafa..512d849 100644
      o_FGSCResizeBuffers1 = (PFN_ResizeBuffers1) pFactoryVTable[39];
  
      if (o_FGSCPresent != nullptr)
-@@ -477,6 +696,8 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
+@@ -477,6 +698,8 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
          LOG_TRACE("FGSCResizeTarget: {:X}", (size_t) o_FGSCResizeTarget);
          LOG_TRACE("FGSCGetFullscreenDesc: {:X}", (size_t) o_FGSCGetFullscreenDesc);
          LOG_TRACE("FGSCPresent1: {:X}", (size_t) o_FGSCPresent1);
@@ -648,7 +650,7 @@ index 821cafa..512d849 100644
          LOG_TRACE("FGSCResizeBuffers1: {:X}", (size_t) o_FGSCResizeBuffers1);
          LOG_TRACE("FGSCGetFrameLatencyWaitableObject: {:X}", (size_t) o_FGSCGetFrameLatencyWaitableObject);
  
-@@ -495,6 +716,12 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
+@@ -495,6 +718,12 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
          if (o_FGSCResizeBuffers1 != nullptr)
              DetourAttach(&(PVOID&) o_FGSCResizeBuffers1, hkResizeBuffers1);
  
@@ -661,7 +663,7 @@ index 821cafa..512d849 100644
          if (State::Instance().activeFgOutput == FGOutput::XeFG)
          {
              if (o_FGSCGetFullscreenState != nullptr)
-@@ -524,6 +751,8 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
+@@ -524,6 +753,8 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
              o_FGSCResizeTarget = nullptr;
              o_FGSCGetFullscreenDesc = nullptr;
              o_FGSCPresent1 = nullptr;
@@ -670,7 +672,7 @@ index 821cafa..512d849 100644
              o_FGSCResizeBuffers1 = nullptr;
              o_FGSCGetFrameLatencyWaitableObject = nullptr;
          }
-@@ -669,6 +898,9 @@ HRESULT FGHooks::hkGetFullscreenState(IDXGISwapChain* This, BOOL* pFullscreen, I
+@@ -669,6 +900,9 @@ HRESULT FGHooks::hkGetFullscreenState(IDXGISwapChain* This, BOOL* pFullscreen, I
  HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat,
                                   UINT SwapChainFlags)
  {
@@ -680,7 +682,7 @@ index 821cafa..512d849 100644
      // Skip XeFG's internal call
      if (_skipResize)
      {
-@@ -859,11 +1091,25 @@ HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Wi
+@@ -859,11 +1093,25 @@ HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Wi
      }
  
      _skipResize1 = false;
@@ -706,7 +708,7 @@ index 821cafa..512d849 100644
          if (fg != nullptr)
          {
              State::Instance().fgChanged = true;
-@@ -914,6 +1160,10 @@ HRESULT FGHooks::hkResizeTarget(IDXGISwapChain* This, const DXGI_MODE_DESC* pNew
+@@ -914,6 +1162,10 @@ HRESULT FGHooks::hkResizeTarget(IDXGISwapChain* This, const DXGI_MODE_DESC* pNew
  HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT Format,
                                    UINT SwapChainFlags, const UINT* pCreationNodeMask, IUnknown* const* ppPresentQueue)
  {
@@ -717,7 +719,7 @@ index 821cafa..512d849 100644
      // Skip XeFG's internal call
      if (_skipResize1)
      {
-@@ -1110,10 +1360,25 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT
+@@ -1110,10 +1362,25 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT
          _skipResize = false;
      }
  
@@ -743,7 +745,7 @@ index 821cafa..512d849 100644
          if (fg != nullptr)
          {
              State::Instance().fgChanged = true;
-@@ -1141,6 +1406,30 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT
+@@ -1141,6 +1408,30 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT
      return result;
  }
  
@@ -774,7 +776,7 @@ index 821cafa..512d849 100644
  HRESULT FGHooks::hkFGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags)
  {
      // Skip XeFG's internal call
-@@ -1212,6 +1501,8 @@ HRESULT FGHooks::hkFGPresent1(IDXGISwapChain1* This, UINT SyncInterval, UINT Fla
+@@ -1212,6 +1503,8 @@ HRESULT FGHooks::hkFGPresent1(IDXGISwapChain1* This, UINT SyncInterval, UINT Fla
  HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
                             const DXGI_PRESENT_PARAMETERS* pPresentParameters)
  {

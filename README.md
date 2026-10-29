@@ -46,7 +46,7 @@ Other graphics injectors or wrappers that install their own `dxgi.dll` or `d3d12
 
 ## Safe removal and recovery
 
-The manager backs up every BeamNG file it changes. **Uninstall** restores the original files and removes the FrameGenNG settings without touching unrelated changes. **Repair** rebuilds the current integration while preserving the selected Frame Generation state and multiplier.
+The manager keeps BeamNG's installed files untouched. The HDR and interface integrations are installed as user-folder overrides. **Uninstall** removes FrameGenNG and restores pre-existing user overrides without touching unrelated changes. **Reinstall after update** removes the old integration and rebuilds it from the current BeamNG files while preserving the selected Frame Generation state and multiplier.
 
 Automatic restore points are created before important operations. Open **Restore Points** to create a manual point or return to an earlier compatible FrameGenNG state. Backups are stored under `FrameGenNG\backups` in the BeamNG user folder; do not delete them manually before uninstalling.
 
@@ -56,7 +56,7 @@ Open **Diagnostics** to check the installation. Advanced logging is optional and
 
 ## After a BeamNG update
 
-Open the FrameGenNG Manager after updating BeamNG. If it reports **BeamNG update detected**, select **Repair**. FrameGenNG rebuilds the integration from the updated game files and stops safely if that BeamNG version is not yet compatible.
+After every BeamNG update, close the game, open FrameGenNG Manager, and select **Reinstall after update** before starting BeamNG again. FrameGenNG does not try to detect game updates automatically. It removes its previous integration, validates the current game files, creates a new baseline, and stops with FrameGenNG uninstalled if the updated files are not supported.
 
 ## Automatic updates
 
