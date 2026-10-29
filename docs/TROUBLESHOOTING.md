@@ -15,8 +15,12 @@ Fully close and restart BeamNG after changing Windows HDR. If the image remains 
 1. Confirm that BeamNG is using DirectX 12.
 2. Enable DLSS in the graphics settings.
 3. Enable **Frame Generation** below DLSS.
-4. Temporarily disable other graphics injectors to rule out a proxy conflict.
-5. Run **Diagnostics** in the manager.
+4. Confirm that Hardware-accelerated GPU scheduling is enabled in Windows and restart Windows after changing it.
+5. Update the NVIDIA driver.
+6. Temporarily disable other graphics injectors to rule out a proxy conflict.
+7. Run **Diagnostics** in the manager.
+
+If FrameGenNG reports that DLSS Frame Generation is unavailable, it leaves the selected replacement unchanged and lets BeamNG continue without Frame Generation. It does not install or select an unbundled fallback.
 
 ## Exit error
 

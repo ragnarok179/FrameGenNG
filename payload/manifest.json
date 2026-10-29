@@ -23,8 +23,8 @@
                   },
                   {
                       "path":  "Bin64/dxgi.dll",
-                      "size":  26669568,
-                      "sha256":  "c94556f6edf552c0f312338e0f01d2e9ab154cde5d44fb5ea69627b39add87e0"
+                      "size":  26670080,
+                      "sha256":  "1868df4cdf07e74d8e63acd4fca82bec09ad0aa76a53add15c92918faccfce48"
                   },
                   {
                       "path":  "Bin64/FGNGEngine.ini",

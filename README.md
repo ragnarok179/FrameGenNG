@@ -2,10 +2,11 @@
 
 Frame Generation integrated into the BeamNG.drive graphics settings.
 
-FrameGenNG uses BeamNG's native DLSS input in DirectX 12 and adds adjustable Frame Generation directly below the game's DLSS options. The project targets GeForce RTX 20, 30, 40, and 50 series GPUs:
+FrameGenNG uses BeamNG's native DLSS input in DirectX 12 and adds adjustable Frame Generation directly below the game's DLSS options. The project targets NVIDIA RTX GPUs using the Turing, Ampere, Ada, and Blackwell architectures:
 
 - RTX 20 and RTX 30: compatibility path powered by `dlssg_for_sm86`;
 - RTX 40 and RTX 50: native DLSS-G path through the FrameGenNG integration layer;
+- professional Quadro RTX, RTX A, RTX Ada, and RTX PRO Blackwell models: the matching architecture path;
 - future RTX generations: a compatibility goal after validation, not a current guarantee.
 
 > **Current validation:** FrameGenNG has been validated on BeamNG.drive 0.40.3.0 with an RTX 3060 Laptop GPU. RTX 20, 40, and 50 GPUs still require testing before compatibility can be guaranteed.
@@ -19,7 +20,7 @@ FrameGenNG uses BeamNG's native DLSS input in DirectX 12 and adds adjustable Fra
 - An up-to-date NVIDIA driver; R580 or newer is recommended for the RTX 20/30 compatibility path
 - Enough free VRAM for Frame Generation
 
-FrameGenNG automatically supports the consumer GeForce RTX 20/30/40/50 naming scheme. Professional RTX A/PRO models and future RTX generations are not currently guaranteed and may be rejected instead of receiving an unvalidated profile.
+FrameGenNG identifies supported RTX hardware from the compute capability reported by the NVIDIA driver. If that information is unavailable, it falls back to explicit, architecture-safe product names. Unknown architectures are rejected instead of receiving a guessed profile.
 
 ## Using Frame Generation
 

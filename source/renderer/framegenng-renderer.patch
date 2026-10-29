@@ -1457,3 +1457,52 @@ index dd2a9dd..9c113a9 100644
  
      IUnknown* _device = nullptr;
  
+diff --git a/FrameGenNGEngine/proxies/Streamline_Proxy.h b/FrameGenNGEngine/proxies/Streamline_Proxy.h
+index 16a8353..66c08aa 100644
+--- a/FrameGenNGEngine/proxies/Streamline_Proxy.h
++++ b/FrameGenNGEngine/proxies/Streamline_Proxy.h
+@@ -428,15 +428,17 @@ class StreamlineProxy
+         sl::AdapterInfo adapterInfo {};
+-        if (StreamlineProxy::IsFeatureSupported()(sl::kFeatureDLSS_G, adapterInfo) != sl::Result::eOk)
++        const auto dlssgSupport = StreamlineProxy::IsFeatureSupported()(sl::kFeatureDLSS_G, adapterInfo);
++        if (dlssgSupport != sl::Result::eOk)
+         {
++            LOG_ERROR("DLSS Frame Generation is unavailable (slIsFeatureSupported result: {}). "
++                      "FrameGenNG will not select an unbundled replacement.",
++                      (int) dlssgSupport);
++
+             if (State::Instance().activeFgNvngx == FGNvngxReplacement::None)
+             {
+-                Config::Instance()->FGNvngxReplacement = FGNvngxReplacement::Nukems;
+-                Config::Instance()->SaveIni();
+-
+                 MessageBoxW(NULL,
+-                            L"You've tried to use real DLSSG, but it's not supported\n"
+-                            "Opti will try to use a replacement, restart the game",
+-                            L"No DLSSG Support", MB_ICONWARNING | MB_OK);
+-
+-                std::exit(1);
++                            L"NVIDIA DLSS Frame Generation could not be initialized.\n\n"
++                            L"FrameGenNG did not select a fallback or change your configuration. "
++                            L"Check Hardware-accelerated GPU scheduling, the NVIDIA driver, and "
++                            L"the FrameGenNG diagnostic logs.",
++                            L"FrameGenNG - DLSS Frame Generation unavailable", MB_ICONWARNING | MB_OK);
+             }
+@@ -446,2 +448,5 @@ class StreamlineProxy
+             }
++
++            State::EnableChecks(owner);
++            return false;
+         }
+@@ -459,3 +464,9 @@ class StreamlineProxy
+-        // A Vulkan game's D3D12 devices, like the ones for interop, don't get it back
+-        if (_isVulkanRequested)
++        if (_isD3D12Requested)
++        {
++            LOG_ERROR("Streamline initialization was already attempted for D3D12 and did not complete");
++            return false;
++        }
++
++        // A Vulkan game's D3D12 devices, like the ones for interop, don't get it back
++        if (_isVulkanRequested)
+         {

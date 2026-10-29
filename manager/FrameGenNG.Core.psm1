@@ -308,6 +308,100 @@ function Assert-FrameGenNGPayloadIntegrity {
     return $manifest
 }
 
+function Get-NvidiaSmiPath {
+    $candidates = @(
+        (Join-Path $env:SystemRoot 'System32\nvidia-smi.exe'),
+        (Join-Path $env:ProgramFiles 'NVIDIA Corporation\NVSMI\nvidia-smi.exe')
+    )
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    }
+
+    $command = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
+    if ($null -ne $command) { return $command.Source }
+    return $null
+}
+
+function Get-NvidiaRtxAdaptersFromDriver {
+    $nvidiaSmi = Get-NvidiaSmiPath
+    if ([string]::IsNullOrWhiteSpace([string]$nvidiaSmi)) { return @() }
+
+    try {
+        $output = @(& $nvidiaSmi '--query-gpu=name,compute_cap' '--format=csv,noheader' 2>$null)
+        if ($LASTEXITCODE -ne 0) { return @() }
+    } catch {
+        return @()
+    }
+
+    $adapters = foreach ($line in $output) {
+        $match = [regex]::Match([string]$line, '^(?<name>.+),\s*(?<capability>\d+\.\d+)\s*$')
+        if ($match.Success -and $match.Groups['name'].Value -match '(?i)\bRTX\b') {
+            [pscustomobject]@{
+                Name = $match.Groups['name'].Value.Trim()
+                ComputeCapability = $match.Groups['capability'].Value
+            }
+        }
+    }
+    return @($adapters)
+}
+
+function Resolve-NvidiaRtxAdapterProfile {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [string]$ComputeCapability
+    )
+
+    if ($Name -notmatch '(?i)\bRTX\b') { return $null }
+
+    if (-not [string]::IsNullOrWhiteSpace($ComputeCapability)) {
+        switch ($ComputeCapability.Trim()) {
+            '7.5' { return [pscustomobject]@{ Profile = 'LegacyRTX'; Gpu = $Name } }
+            '8.6' { return [pscustomobject]@{ Profile = 'LegacyRTX'; Gpu = $Name } }
+            '8.9' { return [pscustomobject]@{ Profile = 'NativeRTX'; Gpu = $Name } }
+            '12.0' { return [pscustomobject]@{ Profile = 'NativeRTX'; Gpu = $Name } }
+            default { return $null }
+        }
+    }
+
+    if ($Name -match '(?i)\b(Ada(?:\s+Lovelace)?|Blackwell)\b') {
+        return [pscustomobject]@{ Profile = 'NativeRTX'; Gpu = $Name }
+    }
+    if ($Name -match '(?i)\b(Turing|Ampere)\b') {
+        return [pscustomobject]@{ Profile = 'LegacyRTX'; Gpu = $Name }
+    }
+    if ($Name -match '(?i)\bGeForce\s+RTX\s+(20|30)\d{2}\b' -or
+        $Name -match '(?i)\bRTX\s+A\d{3,4}\b' -or
+        $Name -match '(?i)\bQuadro\s+RTX\b' -or
+        $Name -match '(?i)\bTITAN\s+RTX\b') {
+        return [pscustomobject]@{ Profile = 'LegacyRTX'; Gpu = $Name }
+    }
+    if ($Name -match '(?i)\bGeForce\s+RTX\s+(40|50)\d{2}\b') {
+        return [pscustomobject]@{ Profile = 'NativeRTX'; Gpu = $Name }
+    }
+    return $null
+}
+
+function Select-NvidiaRtxProfile {
+    param([Parameter(Mandatory)][object[]]$Adapters)
+
+    $resolved = @($Adapters | ForEach-Object {
+        Resolve-NvidiaRtxAdapterProfile -Name ([string]$_.Name) -ComputeCapability ([string]$_.ComputeCapability)
+    } | Where-Object { $null -ne $_ })
+    if ($resolved.Count -ne $Adapters.Count) {
+        $descriptions = @($Adapters | ForEach-Object {
+            $capability = if ([string]::IsNullOrWhiteSpace([string]$_.ComputeCapability)) { 'unknown architecture' } else { "SM $($_.ComputeCapability)" }
+            "$($_.Name) ($capability)"
+        })
+        throw "Unsupported or unvalidated NVIDIA RTX architecture: $($descriptions -join ', '). Supported compute capabilities are 7.5, 8.6, 8.9, and 12.0."
+    }
+
+    $profiles = @($resolved | Select-Object -ExpandProperty Profile -Unique)
+    if ($profiles.Count -ne 1) {
+        throw "Multiple NVIDIA RTX architecture generations were detected. Use -Profile LegacyRTX or -Profile NativeRTX to select the GPU used by BeamNG."
+    }
+    return $resolved[0]
+}
+
 function Get-NvidiaRtxProfile {
     param([ValidateSet('Auto', 'LegacyRTX', 'NativeRTX')][string]$Profile = 'Auto')
 
@@ -315,24 +409,23 @@ function Get-NvidiaRtxProfile {
         return [pscustomobject]@{ Profile = $Profile; Gpu = 'Profile forced from the command line' }
     }
 
-    $gpuNames = @()
+    $driverAdapters = @(Get-NvidiaRtxAdaptersFromDriver)
+    if ($driverAdapters.Count -gt 0) {
+        return Select-NvidiaRtxProfile -Adapters $driverAdapters
+    }
+
     try {
         $gpuNames = @(Get-CimInstance Win32_VideoController -ErrorAction Stop | ForEach-Object { [string]$_.Name })
     } catch {
         throw "Unable to detect the GPU. Use -Profile LegacyRTX or -Profile NativeRTX. Details: $($_.Exception.Message)"
     }
-    $rtx = @($gpuNames | Where-Object { $_ -match '(?i)NVIDIA.*RTX' } | Select-Object -First 1)
-    if ($rtx.Count -eq 0) {
+    $rtxAdapters = @($gpuNames | Where-Object { $_ -match '(?i)NVIDIA.*\bRTX\b' } | ForEach-Object {
+        [pscustomobject]@{ Name = $_; ComputeCapability = $null }
+    })
+    if ($rtxAdapters.Count -eq 0) {
         throw "No NVIDIA RTX GPU was detected. GPUs found: $($gpuNames -join ', ')"
     }
-    $name = [string]$rtx[0]
-    if ($name -match '(?i)RTX\s*(20|30)\d{2}') {
-        return [pscustomobject]@{ Profile = 'LegacyRTX'; Gpu = $name }
-    }
-    if ($name -match '(?i)RTX\s*(40|50)\d{2}') {
-        return [pscustomobject]@{ Profile = 'NativeRTX'; Gpu = $name }
-    }
-    throw "Unknown RTX generation: $name. This version will not guess an unvalidated profile."
+    return Select-NvidiaRtxProfile -Adapters $rtxAdapters
 }
 
 function Get-FileSha256 {
@@ -355,6 +448,56 @@ function Get-DirectorySha256 {
     } finally {
         $sha.Dispose()
     }
+}
+
+function Get-DirectoryFileRecords {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $root = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    return @(Get-ChildItem -LiteralPath $root -Recurse -File -Force | Sort-Object FullName | ForEach-Object {
+        [pscustomobject][ordered]@{
+            relativePath = $_.FullName.Substring($root.Length).TrimStart('\').Replace('\', '/')
+            sha256 = Get-FileSha256 -Path $_.FullName
+        }
+    })
+}
+
+function Test-MutableRuntimeFile {
+    param([Parameter(Mandatory)][string]$RelativePath)
+
+    return $RelativePath.Replace('\', '/').StartsWith('logs/', [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-InstalledDirectoryFiles {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)]$InstalledFiles
+    )
+
+    $expectedFiles = @($InstalledFiles | Where-Object {
+        -not (Test-MutableRuntimeFile -RelativePath ([string]$_.relativePath))
+    })
+    $currentFiles = @(Get-DirectoryFileRecords -Path $Path | Where-Object {
+        -not (Test-MutableRuntimeFile -RelativePath ([string]$_.relativePath))
+    })
+    if ($currentFiles.Count -ne $expectedFiles.Count) {
+        return $false
+    }
+
+    $currentHashes = [System.Collections.Generic.Dictionary[string, string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    foreach ($file in $currentFiles) {
+        $currentHashes[[string]$file.relativePath] = [string]$file.sha256
+    }
+    foreach ($file in $expectedFiles) {
+        $relativePath = [string]$file.relativePath
+        if (-not $currentHashes.ContainsKey($relativePath) -or
+            $currentHashes[$relativePath] -ne [string]$file.sha256) {
+            return $false
+        }
+    }
+    return $true
 }
 
 function Get-PathSha256 {
@@ -439,6 +582,7 @@ function Copy-TargetWithBackup {
         isDirectory = $isDirectory
         originalSha256 = $originalHash
         installedSha256 = Get-PathSha256 -Path $Destination
+        installedFiles = if ($isDirectory) { Get-DirectoryFileRecords -Path $Destination } else { $null }
     }
 }
 
@@ -959,10 +1103,19 @@ function Get-FrameGenNGStatus {
         $destination = [string]$target.destination
         $exists = Test-Path -LiteralPath $destination
         $currentHash = if ($exists) { Get-PathSha256 -Path $destination } else { $null }
+        $hasInstalledFileRecords = $target.PSObject.Properties.Name -contains 'installedFiles' -and
+            $null -ne $target.installedFiles
+        $matchesInstalled = if (-not $exists) {
+            $false
+        } elseif ([bool]$target.isDirectory -and $hasInstalledFileRecords) {
+            Test-InstalledDirectoryFiles -Path $destination -InstalledFiles $target.installedFiles
+        } else {
+            $currentHash -eq [string]$target.installedSha256
+        }
         [pscustomobject][ordered]@{
             destination = $destination
             exists = $exists
-            matchesInstalled = $exists -and $currentHash -eq [string]$target.installedSha256
+            matchesInstalled = $matchesInstalled
             currentSha256 = $currentHash
             installedSha256 = [string]$target.installedSha256
         }

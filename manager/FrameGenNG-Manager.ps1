@@ -123,6 +123,18 @@ $form.Controls.AddRange(@($installButton, $reinstallButton, $uninstallButton))
 $updateButton = New-FrameGenNGButton -Text 'Check for updates' -X 31 -Y $initialLayout.UpdateTop -Width 328 -Height 30 -Colors $colors
 $form.Controls.Add($updateButton)
 
+function Set-UpdateButtonState {
+    param(
+        [Parameter(Mandatory)][string]$Text,
+        [bool]$Enabled = $true,
+        [bool]$UpdateAvailable = $false
+    )
+
+    $updateButton.Text = $Text
+    $updateButton.Enabled = $Enabled
+    $updateButton.ForeColor = if ($UpdateAvailable) { $colors.Danger } else { $colors.Text }
+}
+
 $restorePointsButton = New-FrameGenNGButton -Text 'Restore points…' -X 31 -Y $initialLayout.SecondaryActionTop -Width 130 -Height 28 -Colors $colors
 $diagnosticButton = New-FrameGenNGButton -Text 'Diagnostics…' -X 169 -Y $initialLayout.SecondaryActionTop -Width 112 -Height 28 -Colors $colors
 $detailsButton = New-FrameGenNGButton -Text 'Details ▸' -X 289 -Y $initialLayout.SecondaryActionTop -Width 70 -Height 28 -Colors $colors
@@ -444,10 +456,10 @@ function Complete-UpdateCheck {
         if (-not [bool]$updateCheckResult.success) { throw [string]$updateCheckResult.error }
         $script:updateInfo = $updateCheckResult.data
         if ([bool]$script:updateInfo.UpdateAvailable) {
-            $updateButton.Text = "Update to v$($script:updateInfo.LatestVersion)"
+            Set-UpdateButtonState -Text "Update to v$($script:updateInfo.LatestVersion)" -UpdateAvailable $true
             Write-ManagerLog -Message "Update available: v$($script:updateInfo.LatestVersion)."
         } else {
-            $updateButton.Text = 'Up to date - check again'
+            Set-UpdateButtonState -Text 'Up to date - check again'
             Write-ManagerLog -Message 'Update check: FrameGenNG is up to date.'
             if ($script:updateCheckWasManual) {
                 [System.Windows.Forms.MessageBox]::Show('You already have the latest compatible FrameGenNG release.', 'FrameGenNG is up to date', 'OK', 'Information') | Out-Null
@@ -455,7 +467,7 @@ function Complete-UpdateCheck {
         }
     } catch {
         $script:updateInfo = $null
-        $updateButton.Text = 'Check for updates'
+        Set-UpdateButtonState -Text 'Check for updates'
         Write-ManagerLog -Message "Update check unavailable: $($_.Exception.Message)"
         if ($script:updateCheckWasManual) {
             [System.Windows.Forms.MessageBox]::Show("FrameGenNG could not check GitHub Releases.`r`n`r`n$($_.Exception.Message)", 'Update check unavailable', 'OK', 'Warning') | Out-Null
@@ -474,8 +486,7 @@ function Start-UpdateCheck {
     param([bool]$Manual = $false)
     if ($null -ne $script:updateJob) { return }
     $script:updateCheckWasManual = $Manual
-    $updateButton.Text = 'Checking for updates…'
-    $updateButton.Enabled = $false
+    Set-UpdateButtonState -Text 'Checking for updates…' -Enabled $false
     $currentVersion = Get-FrameGenNGVersion
     $includePrerelease = $false
     $modulePath = Join-Path $PSScriptRoot 'FrameGenNG.Update.psm1'
@@ -633,7 +644,7 @@ $updateButton.Add_Click({
     $launched = $false
     try {
         Set-BusyState -Busy $true
-        $updateButton.Text = 'Downloading and verifying…'
+        Set-UpdateButtonState -Text 'Downloading and verifying…' -Enabled $false
         Write-ManagerLog -Message "Downloading FrameGenNG v$($script:updateInfo.LatestVersion)…"
         [System.Windows.Forms.Application]::DoEvents()
         if ($null -eq $script:resolvedGameRoot -or $null -eq $script:resolvedUserRoot) {
@@ -650,7 +661,7 @@ $updateButton.Add_Click({
         if (-not $launched) {
             Set-BusyState -Busy $false
             if ($null -ne $script:updateInfo -and [bool]$script:updateInfo.UpdateAvailable) {
-                $updateButton.Text = "Update to v$($script:updateInfo.LatestVersion)"
+                Set-UpdateButtonState -Text "Update to v$($script:updateInfo.LatestVersion)" -UpdateAvailable $true
             }
         }
     }

@@ -8,13 +8,17 @@
 | GeForce RTX 30 (Ampere) | FrameGenNG compatibility engine, SM86 path | Validated on RTX 3060 Laptop |
 | GeForce RTX 40 (Ada) | FrameGenNG native DLSS-G path | Not yet tested in BeamNG |
 | GeForce RTX 50 (Blackwell) | FrameGenNG native DLSS-G/MFG path | Not yet tested in BeamNG |
-| Professional RTX A/PRO | No guaranteed automatic profile | Not currently supported |
+| Quadro RTX and TITAN RTX (Turing) | FrameGenNG compatibility engine, SM75 path | Supported by architecture; not yet tested in BeamNG |
+| RTX A-series (Ampere) | FrameGenNG compatibility engine, SM86 path | Supported by architecture; not yet tested in BeamNG |
+| RTX Ada professional models | FrameGenNG native DLSS-G path | Supported by architecture; not yet tested in BeamNG |
+| RTX PRO Blackwell models | FrameGenNG native DLSS-G/MFG path | Supported by architecture; not yet tested in BeamNG |
 | Future RTX generations | Native profile after validation | Not guaranteed |
 
-The manager automatically selects an installation profile from the detected GPU name:
+The manager first reads the GPU compute capability from the NVIDIA driver:
 
-- RTX 20/30: `LegacyRTX`, including the FrameGenNG compatibility `d3d12.dll` proxy;
-- RTX 40/50: `NativeRTX`, without the SM75/SM86 proxy;
+- SM75 and SM86: `LegacyRTX`, including the FrameGenNG compatibility `d3d12.dll` proxy;
+- SM89 and SM120: `NativeRTX`, without the SM75/SM86 proxy;
+- if the driver query is unavailable, explicit Turing, Ampere, Ada, Blackwell, GeForce, Quadro RTX, TITAN RTX, and RTX A naming patterns provide a conservative fallback;
 - unknown RTX generation: installation stops instead of guessing.
 
 ## Software
