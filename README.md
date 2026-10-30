@@ -43,9 +43,13 @@ BeamNG will warn about `dxgi.dll` and, on RTX 20/30, `d3d12.dll`. This is expect
 
 Other graphics injectors or wrappers that install their own `dxgi.dll` or `d3d12.dll` next to the BeamNG executable may conflict with FrameGenNG. Remove or disable the other injector before installing FrameGenNG.
 
+The Steam Overlay remains available for Steam Input and Steam Controller support. Other known third-party overlays stay blocked by the Frame Generation renderer for stability.
+
 ## Safe removal and recovery
 
 The manager keeps BeamNG's installed files untouched. The HDR and interface integrations are installed as user-folder overrides. **Uninstall** removes FrameGenNG and restores pre-existing user overrides without touching unrelated changes. **Reinstall after game update** removes the old integration and rebuilds it from the current BeamNG files while preserving the selected Frame Generation state and multiplier.
+
+To remove FrameGenNG completely, close BeamNG, open the manager, and select **Uninstall**. After the manager confirms that removal completed successfully, manually delete the `FrameGenNG` package folder from the BeamNG root folder. Leaving this package folder in place does not affect BeamNG; it only keeps the manager and installation files available.
 
 Automatic restore points are created before important operations. Open **Restore Points** to create a manual point or return to an earlier compatible FrameGenNG state. Backups are stored under `FrameGenNG\backups` in the BeamNG user folder; do not delete them manually before uninstalling.
 
@@ -60,6 +64,8 @@ After every BeamNG update, close the game, open FrameGenNG Manager, and select *
 ## Automatic updates
 
 The manager checks official stable GitHub Releases when it opens. Select **Update to v…** to download, verify, and install an available update. Settings and the previous working package are preserved so the updater can roll back automatically if installation fails. Drafts and prereleases are ignored.
+
+If an automatic update does not complete correctly, open the manager and select **Uninstall**. Then download the latest release from the [FrameGenNG releases page](https://github.com/ragnarok179/FrameGenNG/releases/latest), replace the old `FrameGenNG` package folder, and install the new version manually.
 
 Expand **Details** inside the manager to inspect operation and update messages.
 

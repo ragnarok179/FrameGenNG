@@ -10,7 +10,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'FrameGenNG.Core.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'FrameGenNG.Core.psm1') -Force -DisableNameChecking
 Import-Module (Join-Path $PSScriptRoot 'FrameGenNG.Update.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'FrameGenNG.Diagnostics.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'FrameGenNG.Ui.psm1') -Force
@@ -151,6 +151,46 @@ $footerLine.Location = New-Object System.Drawing.Point(0, 0)
 $footerLine.Size = New-Object System.Drawing.Size(470, 1)
 $footerLine.BackColor = [System.Drawing.SystemColors]::ActiveBorder
 $footer.Controls.Add($footerLine)
+
+function Open-FrameGenNGWebPage {
+    param([Parameter(Mandatory)][string]$Url)
+
+    try {
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = $Url
+        $startInfo.UseShellExecute = $true
+        [System.Diagnostics.Process]::Start($startInfo) | Out-Null
+    } catch {
+        [System.Windows.Forms.MessageBox]::Show(
+            "Unable to open the web page.`r`n`r`n$Url",
+            'Unable to open link',
+            'OK',
+            'Warning'
+        ) | Out-Null
+    }
+}
+
+function New-FooterLink {
+    param(
+        [Parameter(Mandatory)][string]$Text,
+        [Parameter(Mandatory)][string]$Url,
+        [Parameter(Mandatory)][int]$X
+    )
+
+    $link = New-Object System.Windows.Forms.LinkLabel
+    $link.Text = $Text
+    $link.AutoSize = $true
+    $link.Location = New-Object System.Drawing.Point($X, 20)
+    $link.Font = New-Object System.Drawing.Font('Segoe UI', 8.25)
+    $link.LinkColor = [System.Drawing.SystemColors]::HotTrack
+    $link.ActiveLinkColor = [System.Drawing.SystemColors]::Highlight
+    $link.Add_LinkClicked({ Open-FrameGenNGWebPage -Url $Url }.GetNewClosure())
+    return $link
+}
+
+$releaseLink = New-FooterLink -Text 'GitHub releases' -Url 'https://github.com/ragnarok179/FrameGenNG/releases/latest' -X 31
+$helpLink = New-FooterLink -Text 'Help' -Url 'https://github.com/ragnarok179/FrameGenNG#readme' -X 132
+$footer.Controls.AddRange(@($releaseLink, $helpLink))
 
 $closeButton = New-FrameGenNGButton -Text 'Close' -X 363 -Y 14 -Width 82 -Height 28 -Colors $colors -DialogResult Cancel
 $footer.Controls.Add($closeButton)

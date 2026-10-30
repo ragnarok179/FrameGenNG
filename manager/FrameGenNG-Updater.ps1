@@ -7,6 +7,8 @@ $script:FileMoveAttemptLimit = 20
 $script:RetryDelayMilliseconds = 250
 $script:ManagerExitAttemptLimit = 120
 
+. (Join-Path $PSScriptRoot 'Core\FrameGenNG.Json.ps1')
+
 function Write-UpdateLog {
     param([Parameter(Mandatory)][string]$Message)
     $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $Message"
@@ -56,12 +58,12 @@ function Set-PreservedFrameGenerationSettings {
     if (-not [bool]$Snapshot.available) { return }
     $settingsPath = [string]$Snapshot.path
     if (-not (Test-Path -LiteralPath $settingsPath -PathType Leaf)) { throw "Settings file is missing after update: $settingsPath" }
-    $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+    $settings = ConvertFrom-FrameGenNGJsonFile -Path $settingsPath
     if ([bool]$Snapshot.enabledExists) {
-        $settings | Add-Member -NotePropertyName 'BeamNGFrameGenerationEnabled' -NotePropertyValue ([bool]$Snapshot.enabled) -Force
+        Set-FrameGenNGJsonProperty -Object $settings -Name 'BeamNGFrameGenerationEnabled' -Value ([bool]$Snapshot.enabled)
     }
     if ([bool]$Snapshot.multiplierExists) {
-        $settings | Add-Member -NotePropertyName 'BeamNGFrameGenerationMultiplier' -NotePropertyValue ([int]$Snapshot.multiplier) -Force
+        Set-FrameGenNGJsonProperty -Object $settings -Name 'BeamNGFrameGenerationMultiplier' -Value ([int]$Snapshot.multiplier)
     }
     $json = $settings | ConvertTo-Json -Depth 100
     [System.IO.File]::WriteAllText($settingsPath, $json, [System.Text.UTF8Encoding]::new($false))
@@ -144,14 +146,16 @@ try {
         $state = Get-Content -LiteralPath ([string]$status.statePath) -Raw | ConvertFrom-Json
         $profile = [string]$state.profile
         $settingsPath = [string]$state.settingsPath
-        $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+        $settings = ConvertFrom-FrameGenNGJsonFile -Path $settingsPath
+        $enabledExists = Test-FrameGenNGJsonProperty -Object $settings -Name 'BeamNGFrameGenerationEnabled'
+        $multiplierExists = Test-FrameGenNGJsonProperty -Object $settings -Name 'BeamNGFrameGenerationMultiplier'
         $settingsSnapshot = [pscustomobject]@{
             available = $true
             path = $settingsPath
-            enabledExists = $settings.PSObject.Properties.Name -contains 'BeamNGFrameGenerationEnabled'
-            enabled = if ($settings.PSObject.Properties.Name -contains 'BeamNGFrameGenerationEnabled') { [bool]$settings.BeamNGFrameGenerationEnabled } else { $false }
-            multiplierExists = $settings.PSObject.Properties.Name -contains 'BeamNGFrameGenerationMultiplier'
-            multiplier = if ($settings.PSObject.Properties.Name -contains 'BeamNGFrameGenerationMultiplier') { [int]$settings.BeamNGFrameGenerationMultiplier } else { 2 }
+            enabledExists = $enabledExists
+            enabled = if ($enabledExists) { [bool](Get-FrameGenNGJsonProperty -Object $settings -Name 'BeamNGFrameGenerationEnabled') } else { $false }
+            multiplierExists = $multiplierExists
+            multiplier = if ($multiplierExists) { [int](Get-FrameGenNGJsonProperty -Object $settings -Name 'BeamNGFrameGenerationMultiplier') } else { 2 }
         }
     }
 

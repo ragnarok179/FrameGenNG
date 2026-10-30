@@ -45,10 +45,37 @@ index 7ff5af6..647ed7f 100644
  
      std::optional<ApiUpscalerInput> setInputApiName;
      ApiUpscalerInput currentInputApiName;
+diff --git a/FrameGenNGEngine/DllNames.h b/FrameGenNGEngine/DllNames.h
+--- a/FrameGenNGEngine/DllNames.h
++++ b/FrameGenNGEngine/DllNames.h
+@@ -57,10 +57,8 @@ DEFINE_NAME_VECTORS(overlay, "eosovh-win32-shipping",
+ 
+ DEFINE_NAME_VECTORS(blockOverlay, "eosovh-win32-shipping",
+                                   "eosovh-win64-shipping",
+-                                  "gameoverlayrenderer",
+-                                  "gameoverlayrenderer64",
+                                   "owclient",
+                                   "galaxy",
+                                   "galaxy64",
+                                   "discordhook",
+                                   "discordhook64",
 diff --git a/FrameGenNGEngine/dllmain.cpp b/FrameGenNGEngine/dllmain.cpp
 index c738e4e..5326077 100644
 --- a/FrameGenNGEngine/dllmain.cpp
 +++ b/FrameGenNGEngine/dllmain.cpp
+@@ -1793,12 +1793,6 @@ void Attach()
+         if ((Config::Instance()->FGInput.value_or_default() == FGInput::Upscaler) &&
+             !Config::Instance()->DisableOverlays.has_value())
+             Config::Instance()->DisableOverlays.set_volatile_value(true);
+-
+-        if (Config::Instance()->DisableOverlays.value_or_default())
+-        {
+-            _wputenv_s(L"SteamNoOverlayUIDrawing", L"1");
+-            SetEnvironmentVariableW(L"SteamNoOverlayUIDrawing", L"1");
+-        }
+ 
+         // FSR4 Watermark, overrides environment variable only if set in config
+         // The driver only checks whether the variable exists so disabling has to remove it
 @@ -1939,21 +1939,22 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
          // unhookAdvapi32();
          // DetachHooks();

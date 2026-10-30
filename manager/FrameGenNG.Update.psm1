@@ -200,6 +200,7 @@ function Assert-FrameGenNGUpdateArchive {
             'FrameGenNG/VERSION',
             'FrameGenNG/FrameGenNG Manager.vbs',
             'FrameGenNG/manager/FrameGenNG.Core.psm1',
+            'FrameGenNG/manager/Core/FrameGenNG.Json.ps1',
             'FrameGenNG/manager/Core/FrameGenNG.Recovery.ps1',
             'FrameGenNG/manager/FrameGenNG.Update.psm1',
             'FrameGenNG/manager/FrameGenNG.Diagnostics.psm1',
@@ -273,6 +274,12 @@ function Start-FrameGenNGUpdateHelper {
 
     $helperPath = Join-Path $WorkRoot 'FrameGenNG-Updater.ps1'
     Copy-Item -LiteralPath (Join-Path $HelperPackageRoot 'manager\FrameGenNG-Updater.ps1') -Destination $helperPath -Force
+    $jsonHelperSource = Join-Path $HelperPackageRoot 'manager\Core\FrameGenNG.Json.ps1'
+    if (Test-Path -LiteralPath $jsonHelperSource -PathType Leaf) {
+        $helperCoreRoot = Join-Path $WorkRoot 'Core'
+        New-Item -ItemType Directory -Path $helperCoreRoot -Force | Out-Null
+        Copy-Item -LiteralPath $jsonHelperSource -Destination $helperCoreRoot -Force
+    }
 
     $requestPath = Join-Path $WorkRoot 'update-request.json'
     $requestJson = $Request | ConvertTo-Json -Depth 20

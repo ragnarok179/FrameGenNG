@@ -12,6 +12,7 @@ The `framegenng-renderer.patch` file contains the FrameGenNG changes applied to 
 - reading FrameGenNG settings from the configured BeamNG user folder or its Local AppData default;
 - dynamic enable and multiplier selection;
 - presentation-path adaptation for the Frame Generation swapchain;
+- Steam Overlay and Steam Input passthrough while other known overlays remain blocked;
 - automatic SDR/HDR presentation switching based on Windows HDR and BeamNG's requested output;
 - BeamNG shutdown signaling and targeted avoidance of unsafe late NGX calls;
 - swapchain lifetime fixes identified during prototype testing.

@@ -11,6 +11,8 @@ $script:ManualRestorePointLimit = 10
 $script:TechnicalBackupLimit = 2
 $script:RecoveryArtifactLimit = 3
 
+. (Join-Path $PSScriptRoot 'Core\FrameGenNG.Json.ps1')
+
 function Get-FrameGenNGPackageRoot {
     return [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 }
@@ -701,21 +703,27 @@ function Get-GraphicsLayoutPatch {
         [Parameter(Mandatory)][string]$SourcePath,
         [Parameter(Mandatory)][string]$UserRoot
     )
-    $layout = Get-Content -LiteralPath $SourcePath -Raw | ConvertFrom-Json
+    $layout = ConvertFrom-FrameGenNGJsonFile -Path $SourcePath
     $text = Get-FrameGenNGGameStrings -UserRoot $UserRoot
-    $graphics = @($layout.items | Where-Object {
-        $_.PSObject.Properties.Name -contains 'categoryId' -and $_.categoryId -eq 'graphics'
+    $graphics = @(Get-FrameGenNGJsonProperty -Object $layout -Name 'items' | Where-Object {
+        (Test-FrameGenNGJsonProperty -Object $_ -Name 'categoryId') -and
+        (Get-FrameGenNGJsonProperty -Object $_ -Name 'categoryId') -eq 'graphics'
     })
     if ($graphics.Count -ne 1) { throw "BeamNG graphics category is missing or ambiguous: $($graphics.Count)" }
 
-    $groups = @($graphics[0].items | Where-Object {
-        $_.PSObject.Properties.Name -contains 'items' -and
-        @($_.items | Where-Object { $_.PSObject.Properties.Name -contains 'setting' -and $_.setting -eq 'GraphicAntialiasType' }).Count -eq 1
+    $groups = @(Get-FrameGenNGJsonProperty -Object $graphics[0] -Name 'items' | Where-Object {
+        (Test-FrameGenNGJsonProperty -Object $_ -Name 'items') -and
+        @((Get-FrameGenNGJsonProperty -Object $_ -Name 'items') | Where-Object {
+            (Test-FrameGenNGJsonProperty -Object $_ -Name 'setting') -and
+            (Get-FrameGenNGJsonProperty -Object $_ -Name 'setting') -eq 'GraphicAntialiasType'
+        }).Count -eq 1
     })
     if ($groups.Count -ne 1) { throw "BeamNG DLSS group is missing or ambiguous: $($groups.Count)" }
 
-    $alreadyPatched = @($groups[0].items | Where-Object {
-        $_.PSObject.Properties.Name -contains 'setting' -and $_.setting -eq $script:SettingsEnabledKey
+    $groupItems = @(Get-FrameGenNGJsonProperty -Object $groups[0] -Name 'items')
+    $alreadyPatched = @($groupItems | Where-Object {
+        (Test-FrameGenNGJsonProperty -Object $_ -Name 'setting') -and
+        (Get-FrameGenNGJsonProperty -Object $_ -Name 'setting') -eq $script:SettingsEnabledKey
     }).Count -gt 0
     if ($alreadyPatched) { return $layout }
 
@@ -754,16 +762,16 @@ function Get-GraphicsLayoutPatch {
 
     $newItems = [System.Collections.Generic.List[object]]::new()
     $inserted = $false
-    foreach ($item in @($groups[0].items)) {
+    foreach ($item in $groupItems) {
         $newItems.Add($item)
-        if (-not $inserted -and $item.PSObject.Properties.Name -contains 'setting' -and
-            $item.setting -eq 'GraphicUpscalingSharpness') {
+        if (-not $inserted -and (Test-FrameGenNGJsonProperty -Object $item -Name 'setting') -and
+            (Get-FrameGenNGJsonProperty -Object $item -Name 'setting') -eq 'GraphicUpscalingSharpness') {
             foreach ($fgItem in $fgItems) { $newItems.Add($fgItem) }
             $inserted = $true
         }
     }
     if (-not $inserted) { throw 'Unable to find the FrameGenNG control insertion point after the DLSS settings.' }
-    $groups[0].items = $newItems.ToArray()
+    Set-FrameGenNGJsonProperty -Object $groups[0] -Name 'items' -Value $newItems.ToArray()
     return $layout
 }
 
@@ -819,11 +827,11 @@ bool FrameGenNGIsHdr10Output(uint outputMode)
 
 function Get-OriginalSettingState {
     param([Parameter(Mandatory)]$Settings, [Parameter(Mandatory)][string]$Name)
-    $exists = $Settings.PSObject.Properties.Name -contains $Name
+    $exists = Test-FrameGenNGJsonProperty -Object $Settings -Name $Name
     return [pscustomobject][ordered]@{
         name = $Name
         existed = $exists
-        value = if ($exists) { $Settings.$Name } else { $null }
+        value = if ($exists) { Get-FrameGenNGJsonProperty -Object $Settings -Name $Name } else { $null }
     }
 }
 
@@ -831,9 +839,9 @@ function Restore-SettingState {
     param([Parameter(Mandatory)]$Settings, [Parameter(Mandatory)]$State)
     $name = [string]$State.name
     if ([bool]$State.existed) {
-        $Settings | Add-Member -NotePropertyName $name -NotePropertyValue $State.value -Force
+        Set-FrameGenNGJsonProperty -Object $Settings -Name $name -Value $State.value
     } else {
-        $Settings.PSObject.Properties.Remove($name)
+        Remove-FrameGenNGJsonProperty -Object $Settings -Name $name
     }
 }
 
@@ -1017,13 +1025,13 @@ function Install-FrameGenNG {
             $index++
         }
 
-        $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+        $settings = ConvertFrom-FrameGenNGJsonFile -Path $settingsPath
         $settingsState = @(
             Get-OriginalSettingState -Settings $settings -Name $script:SettingsEnabledKey
             Get-OriginalSettingState -Settings $settings -Name $script:SettingsMultiplierKey
         )
-        $settings | Add-Member -NotePropertyName $script:SettingsEnabledKey -NotePropertyValue $true -Force
-        $settings | Add-Member -NotePropertyName $script:SettingsMultiplierKey -NotePropertyValue 2 -Force
+        Set-FrameGenNGJsonProperty -Object $settings -Name $script:SettingsEnabledKey -Value $true
+        Set-FrameGenNGJsonProperty -Object $settings -Name $script:SettingsMultiplierKey -Value 2
         Write-JsonFile -Value $settings -Path $settingsPath -Depth 100
         Clear-BeamNGShaderCache -UserRoot $userRoot
 
@@ -1061,7 +1069,7 @@ function Install-FrameGenNG {
                 Restore-TrackedTarget -Target $target -BackupRoot $backupRoot -AllowedRoots @($gameRootResolved, $userRoot) -GameRoot $gameRootResolved
             }
             if ($null -ne $settingsState -and (Test-Path -LiteralPath $settingsPath -PathType Leaf)) {
-                $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+                $settings = ConvertFrom-FrameGenNGJsonFile -Path $settingsPath
                 foreach ($entry in $settingsState) { Restore-SettingState -Settings $settings -State $entry }
                 Write-JsonFile -Value $settings -Path $settingsPath -Depth 100
             }
@@ -1110,7 +1118,7 @@ function Uninstall-FrameGenNG {
         throw "Settings file is outside the allowed BeamNG user folder: $settingsPath"
     }
     if (Test-Path -LiteralPath $settingsPath -PathType Leaf) {
-        $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+        $settings = ConvertFrom-FrameGenNGJsonFile -Path $settingsPath
         foreach ($entry in @($state.settings)) { Restore-SettingState -Settings $settings -State $entry }
         Write-JsonFile -Value $settings -Path $settingsPath -Depth 100
     }
@@ -1145,15 +1153,15 @@ function Reinstall-FrameGenNG {
     $state = $stateRecord.state
     $profile = [string]$state.profile
     $settingsPath = [string]$state.settingsPath
-    $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
-    $enabled = if ($settings.PSObject.Properties.Name -contains $script:SettingsEnabledKey) { [bool]$settings.($script:SettingsEnabledKey) } else { $true }
-    $multiplier = if ($settings.PSObject.Properties.Name -contains $script:SettingsMultiplierKey) { [int]$settings.($script:SettingsMultiplierKey) } else { 2 }
+    $settings = ConvertFrom-FrameGenNGJsonFile -Path $settingsPath
+    $enabled = if (Test-FrameGenNGJsonProperty -Object $settings -Name $script:SettingsEnabledKey) { [bool](Get-FrameGenNGJsonProperty -Object $settings -Name $script:SettingsEnabledKey) } else { $true }
+    $multiplier = if (Test-FrameGenNGJsonProperty -Object $settings -Name $script:SettingsMultiplierKey) { [int](Get-FrameGenNGJsonProperty -Object $settings -Name $script:SettingsMultiplierKey) } else { 2 }
     New-FrameGenNGRestorePoint -UserRoot $userRoot -Reason 'before-reinstall' -GameRoot $gameRootResolved -LauncherIni $LauncherIni | Out-Null
     Uninstall-FrameGenNG -GameRoot $gameRootResolved -LauncherIni $LauncherIni -SkipRestorePoint | Out-Null
     $installationState = Install-FrameGenNG -GameRoot $gameRootResolved -LauncherIni $LauncherIni -Profile $profile -SkipRestorePoint
-    $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
-    $settings | Add-Member -NotePropertyName $script:SettingsEnabledKey -NotePropertyValue $enabled -Force
-    $settings | Add-Member -NotePropertyName $script:SettingsMultiplierKey -NotePropertyValue $multiplier -Force
+    $settings = ConvertFrom-FrameGenNGJsonFile -Path $settingsPath
+    Set-FrameGenNGJsonProperty -Object $settings -Name $script:SettingsEnabledKey -Value $enabled
+    Set-FrameGenNGJsonProperty -Object $settings -Name $script:SettingsMultiplierKey -Value $multiplier
     Write-JsonFile -Value $settings -Path $settingsPath -Depth 100
     return $installationState
 }

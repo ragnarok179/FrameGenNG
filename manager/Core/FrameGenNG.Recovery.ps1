@@ -9,14 +9,16 @@ function Get-FrameGenNGSettingsSnapshot {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         return [pscustomobject][ordered]@{ available = $false; path = $path }
     }
-    $settings = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    $settings = ConvertFrom-FrameGenNGJsonFile -Path $path
+    $enabledExists = Test-FrameGenNGJsonProperty -Object $settings -Name $script:SettingsEnabledKey
+    $multiplierExists = Test-FrameGenNGJsonProperty -Object $settings -Name $script:SettingsMultiplierKey
     return [pscustomobject][ordered]@{
         available = $true
         path = $path
-        enabledExists = $settings.PSObject.Properties.Name -contains $script:SettingsEnabledKey
-        enabled = if ($settings.PSObject.Properties.Name -contains $script:SettingsEnabledKey) { [bool]$settings.($script:SettingsEnabledKey) } else { $false }
-        multiplierExists = $settings.PSObject.Properties.Name -contains $script:SettingsMultiplierKey
-        multiplier = if ($settings.PSObject.Properties.Name -contains $script:SettingsMultiplierKey) { [int]$settings.($script:SettingsMultiplierKey) } else { 2 }
+        enabledExists = $enabledExists
+        enabled = if ($enabledExists) { [bool](Get-FrameGenNGJsonProperty -Object $settings -Name $script:SettingsEnabledKey) } else { $false }
+        multiplierExists = $multiplierExists
+        multiplier = if ($multiplierExists) { [int](Get-FrameGenNGJsonProperty -Object $settings -Name $script:SettingsMultiplierKey) } else { 2 }
     }
 }
 
