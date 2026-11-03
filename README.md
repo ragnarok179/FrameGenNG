@@ -2,54 +2,52 @@
 
 Frame Generation integrated into the BeamNG.drive graphics settings.
 
-FrameGenNG adds Frame Generation below BeamNG's native upscaling options. It supports NVIDIA DLSS-G on RTX 20, 30, 40, and 50 GPUs and matching professional RTX models, AMD FidelityFX Frame Generation with FSR 3/4, and Intel XeSS Frame Generation with XeSS.
+FrameGenNG uses BeamNG's native DLSS input in DirectX 12 and adds adjustable Frame Generation directly below the game's DLSS options. The project targets NVIDIA RTX GPUs using the Turing, Ampere, Ada, and Blackwell architectures:
 
-- **DLSS-G:** up to 4×; RTX 20/30 use the compatibility path and RTX 40/50 use the native path.
-- **FidelityFX and XeSS-FG:** 2× on supported FrameGenNG configurations.
-- **Current installer:** requires a recognized NVIDIA RTX GPU. Non-RTX GPUs are not yet supported.
+- RTX 20 and RTX 30: compatibility path powered by `dlssg_for_sm86`;
+- RTX 40 and RTX 50: native DLSS-G path through the FrameGenNG integration layer;
+- professional Quadro RTX, RTX A, RTX Ada, and RTX PRO Blackwell models: the matching architecture path;
+- future RTX generations: a compatibility goal after validation, not a current guarantee.
+
+> **Current validation:** FrameGenNG has been validated on BeamNG.drive 0.40.3.0 with an RTX 3060 Laptop GPU. RTX 20, 40, and 50 GPUs still require testing before compatibility can be guaranteed.
 
 ## Requirements
 
 - Windows 10 version 2004 (build 19041) or newer, or Windows 11, 64-bit
-- A recognized NVIDIA RTX GPU with an up-to-date driver; R580 or newer is recommended for the RTX 20/30 compatibility path
-- BeamNG.drive running in DirectX 12, or Vulkan with the experimental FidelityFX path
-- DLSS, FSR 3, FSR 4, or XeSS selected in BeamNG
+- BeamNG.drive running in DirectX 12
+- DLSS enabled in BeamNG
 - Hardware-accelerated GPU scheduling enabled in Windows
+- An up-to-date NVIDIA driver; R580 or newer is recommended for the RTX 20/30 compatibility path
 - Enough free VRAM for Frame Generation
 
 ## Using Frame Generation
 
-Frame Generation inserts images between rendered frames. For example, 60 base FPS at 2× can display up to 120 FPS, while 30 FPS at 3× can reach 90 FPS. It cannot make a very low base frame rate feel smooth, so 2× is recommended.
+Frame Generation creates additional images between the frames rendered by the game. For example, 60 base FPS at 2× can produce up to 120 displayed FPS, while 30 base FPS at 3× can produce up to 90 displayed FPS.
 
-| Renderer | BeamNG upscaler | Frame Generation | Multiplier |
-| --- | --- | --- | --- |
-| DirectX 12 | DLSS | NVIDIA DLSS-G | 2×, 3×, or 4× |
-| DirectX 12 | FSR 3 or FSR 4 | AMD FidelityFX | 2× |
-| DirectX 12 | XeSS | Intel XeSS-FG | 2× |
-| Vulkan | FSR 3 or FSR 4 | AMD FidelityFX | 2× |
+The multiplier does not replace a good base frame rate. A game running at 5 base FPS will not feel smooth simply because 4× reports up to 20 displayed FPS. Low base FPS can still cause high latency and visible interpolation artifacts, so 2× remains the recommended setting.
 
-DirectX 12 is recommended. FidelityFX, XeSS-FG, and Vulkan support are experimental. Restart BeamNG after changing the upscaler or Frame Generation engine. FSR 4 upscaling remains limited to hardware supported by AMD.
+BeamNG's FPS counter only reports the base frames rendered by the game. Press **Alt+R** to open the NVIDIA App performance overlay and see the displayed frame rate including generated frames.
 
-BeamNG reports only the base frame rate. Press **Alt+R** for the NVIDIA App overlay and the displayed FPS including generated frames. For stable results, limit the base FPS and leave roughly 10–20% GPU headroom.
+For more stable results, limit the base frame rate instead of leaving it unlimited. Adjust the limit or graphics settings so normal GPU usage stays around 80–90% in the NVIDIA overlay (alt+r). This leaves some performance headroom for demanding scenes and helps keep the frame rate consistent.
 
 ## Quick installation
 
 1. Close BeamNG.drive.
-2. Extract the `FrameGenNG` folder directly into the BeamNG root folder. (Steam: Library → Right-click BeamNG.drive → Manage → Browse local files.)
+2. Extract the `FrameGenNG` folder directly into the BeamNG root folder. (You can find it through Steam: Library → Right-click BeamNG.drive → Manage → Browse local files.)
 3. Open `FrameGenNG Manager.vbs`.
 4. Select **Install**.
-5. Start BeamNG and select a compatible renderer and upscaler from the table above.
-6. Restart the game, then enable Frame Generation below the upscaling settings in **Options → Graphics**.
+5. Start BeamNG in DirectX 12, enable DLSS, then configure Frame Generation below the DLSS settings.
+6. To configure it, open **Options → Graphics** in BeamNG, enable **DLSS**, then use the Frame Generation controls displayed directly below the DLSS settings.
 
-Frame Generation starts disabled after installation. Your selected state and multiplier are preserved across normal restarts, automatic updates, and **Reinstall after game update**.
+BeamNG will warn about `dxgi.dll` and, on RTX 20/30, `d3d12.dll`. This is expected: these proxy libraries load the FrameGenNG graphics layer. Select **Cancel** in that warning if you do not want BeamNG to show it again.
 
-BeamNG will warn about `dxgi.dll` and, on RTX 20/30, `d3d12.dll`; this is expected. Select **Cancel** in that warning if you do not want it to appear again.
+Other graphics injectors or wrappers that install their own `dxgi.dll` or `d3d12.dll` next to the BeamNG executable may conflict with FrameGenNG. Remove or disable the other injector before installing FrameGenNG.
 
-Other graphics injectors using these filenames may conflict with FrameGenNG. The Steam Overlay remains available for Steam Input and Steam Controller support; other known third-party overlays stay blocked for stability.
+The Steam Overlay remains available for Steam Input and Steam Controller support. Other known third-party overlays stay blocked by the Frame Generation renderer for stability.
 
 ## Safe removal and recovery
 
-The manager does not overwrite BeamNG's original files. It adds its runtime files to `Bin64` and installs the HDR and interface changes as user-folder overrides. **Uninstall** removes FrameGenNG and restores pre-existing overrides without touching unrelated changes. **Reinstall after game update** rebuilds the integration from the current BeamNG files while preserving the selected Frame Generation state and multiplier.
+The manager keeps BeamNG's installed files untouched. The HDR and interface integrations are installed as user-folder overrides. **Uninstall** removes FrameGenNG and restores pre-existing user overrides without touching unrelated changes. **Reinstall after game update** removes the old integration and rebuilds it from the current BeamNG files while preserving the selected Frame Generation state and multiplier.
 
 To remove FrameGenNG completely, close BeamNG, open the manager, and select **Uninstall**. After the manager confirms that removal completed successfully, manually delete the `FrameGenNG` package folder from the BeamNG root folder. Leaving this package folder in place does not affect BeamNG; it only keeps the manager and installation files available.
 
@@ -67,7 +65,9 @@ After every BeamNG update, close the game, open FrameGenNG Manager, and select *
 
 The manager checks official stable GitHub Releases when it opens. Select **Update to v…** to download, verify, and install an available update. Settings and the previous working package are preserved so the updater can roll back automatically if installation fails. Drafts and prereleases are ignored.
 
-If an automatic update does not complete correctly, select **Uninstall**, download the [latest release](https://github.com/ragnarok179/FrameGenNG/releases/latest), replace the package folder, and install it manually. Expand **Details** to inspect operation and update messages.
+If an automatic update does not complete correctly, open the manager and select **Uninstall**. Then download the latest release from the [FrameGenNG releases page](https://github.com/ragnarok179/FrameGenNG/releases/latest), replace the old `FrameGenNG` package folder, and install the new version manually.
+
+Expand **Details** inside the manager to inspect operation and update messages.
 
 ## License and credits
 
