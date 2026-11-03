@@ -1,7 +1,8 @@
 # FrameGenNG architecture
 
 ```text
-BeamNG DX12 + DLSS SR
+BeamNG DX12 + supported temporal upscaler
+or BeamNG Vulkan + FSR 3/FSR 4 (experimental)
         │
         ▼
 FrameGenNG rendering bridge (dxgi.dll)
@@ -10,32 +11,34 @@ FrameGenNG rendering bridge (dxgi.dll)
   ├─ adapts the presentation path used by Frame Generation
   └─ signals shutdown safely to NGX
         │
-        ├─ RTX 20/30 ─► FrameGenNG compatibility engine (d3d12.dll + SM75/SM86 kernels)
-        │
-        └─ RTX 40/50 ─► native DLSS-G runtime
+        ├─ DLSS ─► NVIDIA DLSS Frame Generation
+        ├─ FSR 3/FSR 4 ─► AMD FidelityFX Frame Generation
+        └─ XeSS ─► Intel XeSS Frame Generation
         │
         ▼
 Swapchain with generated frames
 ```
 
+The Vulkan branch supports the FSR 3 and FSR 4 upscalers with the monolithic FidelityFX SDK 1.1.4 Vulkan provider. Keeping this provider isolated avoids mixing its lifecycle with the incompatible split-loader swapchain lifecycle. Vulkan presentation hooks are installed only for the FidelityFX path. DLSS-G, XeSS-FG, and other unsupported Vulkan modes clear the native FrameGenNG backend state and remain on BeamNG's untouched presentation path.
+
 ## BeamNG integration
 
-The installer adds two controls below the DLSS settings:
+The installer adds two controls below the supported upscaling settings:
 
 - Frame Generation enable/disable;
-- a 2×, 3×, or 4× multiplier.
+- a 2×–4× multiplier for DLSS; FSR and XeSS use their fixed 2× path.
 
-The controls are hidden when DLSS is not selected. The DLL reads the settings at most twice per second. Its separate overlay, shortcuts, splash screen, debugging UI, alternative upscalers, plugin loading, sharpening, output scaling, and magnifier are disabled in the production configuration.
+The controls are visible for DLSS, FSR 3, FSR 4, and XeSS. They remain hidden for BeamNG's internal FSR 3 (Custom) mode because that path does not expose compatible vendor API inputs. At startup, the DLL reads the selected upscaler and chooses the corresponding Frame Generation engine. A runtime upscaler change pauses Frame Generation until the next game launch, avoiding unsafe backend replacement while a swapchain is active. The DLL continues to poll enable and multiplier settings at most twice per second. Its separate overlay, shortcuts, splash screen, debugging UI, plugin loading, sharpening, output scaling, and magnifier remain disabled in the production configuration.
 
-A small, version-checked shader override can route BeamNG's scRGB output mode through the game's existing HDR10 encoder. The original shader in the Steam installation is never modified: the generated override is stored at the same relative path in BeamNG's user folder. The rendering bridge activates this path only when Windows HDR is active and BeamNG requests its HDR output. It otherwise preserves the normal SDR swapchain, including when Windows HDR is active but BeamNG HDR is disabled. Installation stops on an unknown vanilla shader layout instead of applying an unverified text replacement.
+A small, version-checked shader override keeps BeamNG's native SDR and scRGB mode values under Vulkan, while the DirectX 12 branch can route BeamNG's HDR output through the existing HDR10 encoder. The original shader in the Steam installation is never modified: the generated override is stored at the same relative path in BeamNG's user folder. The DirectX 12 bridge activates only when Windows HDR is active and BeamNG requests HDR; Vulkan never uses that bridge. Installation stops on an unknown vanilla shader layout instead of applying an unverified text replacement.
 
 A GELua extension writes a signal during `onPreExit`. The DLL observes it before D3D12 teardown and avoids unsafe late NGX shutdown calls.
 
 ## Reversible installation
 
-The manager applies changes as a transaction: validate every payload hash, reject proxy and HDR-override collisions, back up existing user overrides, generate the shader and interface overrides from the current vanilla files, invalidate BeamNG's rendering shader cache, then record installation state. Uninstall removes the generated override and invalidates the same disposable cache. If a step fails, already changed targets are restored. The state records SHA-256 hashes and is duplicated inside its backup folder so uninstall can recover from a missing primary state file.
+The manager applies changes as a transaction: validate every payload hash, reject proxy and HDR-override collisions, back up existing user overrides, generate the shader and interface overrides from the current vanilla files, invalidate BeamNG's rendering shader cache, then record installation state. Uninstall removes targets that are still recognized as FrameGenNG files and invalidates the same disposable cache. A game-folder target replaced by BeamNG or another tool is copied to recovery storage and preserved instead of being deleted or overwritten with an older backup. If an installation step fails, already changed targets are restored. The state records SHA-256 hashes and is duplicated inside its uniquely named backup folder so uninstall can recover from a missing primary state file.
 
-FrameGenNG does not infer whether BeamNG was updated. The user starts **Reinstall after game update**, which removes the previous integration and creates a fresh baseline from the current BeamNG files. Legacy installation states that modified a game file are still removed conservatively: a game file changed outside FrameGenNG is preserved instead of being replaced by an older backup.
+FrameGenNG does not infer whether BeamNG was updated. The user starts **Reinstall after game update**, which removes the previous integration and creates a fresh baseline from the current BeamNG files. Legacy installation states that modified a game file are still removed conservatively: a game file changed outside FrameGenNG is preserved instead of being replaced by an older backup. If such a preserved file conflicts with the new integration, reinstallation stops and leaves the unknown file untouched rather than risking the updated game installation.
 
 The rendering layer starts with Frame Generation disabled. Valid BeamNG settings enable it after startup; missing or invalid settings therefore leave BeamNG without Frame Generation instead of enabling an uncontrolled default.
 

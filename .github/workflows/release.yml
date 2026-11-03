@@ -91,7 +91,9 @@ jobs:
           $releaseNotes = @(
             "SHA-256: ``$checksum`` — ``FrameGenNG-v$env:RELEASE_VERSION.zip``",
             '',
-            'Before installing FrameGenNG, please read the [installation, update, repair, and removal instructions](https://github.com/ragnarok179/FrameGenNG#readme).'
+            'Before installing FrameGenNG, please read the [installation, update, repair, and removal instructions](https://github.com/ragnarok179/FrameGenNG#readme).',
+            '',
+            'Share your feedback or discuss the mod in the [FrameGenNG Reddit post](https://www.reddit.com/r/BeamNG/s/QQDYUd3eaT).'
           ) -join "`n"
           $arguments = @(
             'release', 'create', "v$env:RELEASE_VERSION",

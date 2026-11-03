@@ -504,6 +504,31 @@ function Test-InstalledDirectoryFiles {
     return $true
 }
 
+function Test-InstalledDirectoryContainsExpectedFiles {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)]$InstalledFiles
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return $false }
+    $currentHashes = [System.Collections.Generic.Dictionary[string, string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    foreach ($file in @(Get-DirectoryFileRecords -Path $Path)) {
+        $currentHashes[[string]$file.relativePath] = [string]$file.sha256
+    }
+    foreach ($file in @($InstalledFiles | Where-Object {
+        -not (Test-MutableRuntimeFile -RelativePath ([string]$_.relativePath))
+    })) {
+        $relativePath = [string]$file.relativePath
+        if (-not $currentHashes.ContainsKey($relativePath) -or
+            $currentHashes[$relativePath] -ne [string]$file.sha256) {
+            return $false
+        }
+    }
+    return $true
+}
+
 function Get-IniSettings {
     param([Parameter(Mandatory)][string]$Path)
 
@@ -654,6 +679,20 @@ function Backup-WritableTarget {
     }
 }
 
+function Resolve-TrackedBackupPath {
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$BackupName
+    )
+
+    $resolvedRoot = [System.IO.Path]::GetFullPath($Root).TrimEnd('\')
+    $resolvedPath = [System.IO.Path]::GetFullPath((Join-Path $resolvedRoot $BackupName))
+    if (-not (Test-PathUnderRoot -Path $resolvedPath -Roots @($resolvedRoot))) {
+        throw "Unsafe tracked backup path: $resolvedPath"
+    }
+    return $resolvedPath
+}
+
 function Restore-TrackedTarget {
     param(
         [Parameter(Mandatory)]$Target,
@@ -669,7 +708,6 @@ function Restore-TrackedTarget {
 
     $isGameTarget = -not [string]::IsNullOrWhiteSpace($GameRoot) -and
         (Test-PathUnderRoot -Path $destination -Roots @($GameRoot))
-    $isPreExistingGameFile = $isGameTarget -and [bool]$Target.existed
     if (Test-Path -LiteralPath $destination) {
         $currentHash = Get-PathSha256 -Path $destination
         $installedHash = [string]$Target.installedSha256
@@ -677,24 +715,87 @@ function Restore-TrackedTarget {
             $currentHash -ne $installedHash
         if ($changedOutsideFrameGenNG -and -not [string]::IsNullOrWhiteSpace($RecoveryRoot)) {
             New-Item -ItemType Directory -Path $RecoveryRoot -Force | Out-Null
-            Copy-Item -LiteralPath $destination -Destination (Join-Path $RecoveryRoot ([string]$Target.backupName)) -Recurse -Force
+            $recoveryPath = Resolve-TrackedBackupPath -Root $RecoveryRoot -BackupName ([string]$Target.backupName)
+            Copy-Item -LiteralPath $destination -Destination $recoveryPath -Recurse -Force
         }
-        if ($isPreExistingGameFile -and $changedOutsideFrameGenNG) {
+        $isRecognizedFrameGenNGTarget = Test-TrackedTargetOwnedByFrameGenNG -Target $Target -Destination $destination
+        if ($isGameTarget -and $changedOutsideFrameGenNG -and -not $isRecognizedFrameGenNGTarget) {
+            # A game update or another tool may have replaced this path. Keep the unknown file instead of
+            # restoring an older backup or deleting a file that no longer belongs to FrameGenNG.
             return
         }
         Remove-Item -LiteralPath $destination -Recurse -Force
-    } elseif ($isPreExistingGameFile) {
+    } elseif ($isGameTarget -and [bool]$Target.existed) {
         # Absence can be the current vanilla state after a game update. Never restore an old game file blindly.
         return
     }
 
     if ([bool]$Target.existed) {
-        $source = Join-Path $BackupRoot ([string]$Target.backupName)
+        $source = Resolve-TrackedBackupPath -Root $BackupRoot -BackupName ([string]$Target.backupName)
         if (-not (Test-Path -LiteralPath $source)) {
             throw "Original backup is missing: $source"
         }
         New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
         Copy-Item -LiteralPath $source -Destination $destination -Recurse -Force
+    }
+}
+
+function Test-TrackedTargetOwnedByFrameGenNG {
+    param(
+        [Parameter(Mandatory)]$Target,
+        [Parameter(Mandatory)][string]$Destination
+    )
+
+    $currentHash = Get-PathSha256 -Path $Destination
+    if (-not [string]::IsNullOrWhiteSpace([string]$Target.installedSha256) -and
+        $currentHash -eq [string]$Target.installedSha256) {
+        return $true
+    }
+
+    $name = [System.IO.Path]::GetFileName($Destination)
+    if ($name.Equals('FrameGenNG.ini', [System.StringComparison]::OrdinalIgnoreCase)) {
+        return Test-FrameGenNGRuntimeConfigFile -Path $Destination
+    }
+    if ($name.Equals('FGNGEngine.ini', [System.StringComparison]::OrdinalIgnoreCase)) {
+        if (-not (Test-Path -LiteralPath $Destination -PathType Leaf)) { return $false }
+        return (Get-Content -LiteralPath $Destination -TotalCount 1) -ceq '; FrameGenNG compatibility engine configuration.'
+    }
+    if ([bool]$Target.isDirectory -and
+        $Target.PSObject.Properties.Name -contains 'installedFiles' -and
+        $null -ne $Target.installedFiles) {
+        return Test-InstalledDirectoryContainsExpectedFiles -Path $Destination -InstalledFiles $Target.installedFiles
+    }
+    return $false
+}
+
+function Assert-TrackedTargetBackupsAvailable {
+    param(
+        [Parameter(Mandatory)]$Targets,
+        [Parameter(Mandatory)][string]$BackupRoot
+    )
+
+    foreach ($target in @($Targets | Where-Object { [bool]$_.existed })) {
+        $backupPath = Resolve-TrackedBackupPath -Root $BackupRoot -BackupName ([string]$target.backupName)
+        if (-not (Test-Path -LiteralPath $backupPath)) {
+            throw "Original backup is missing: $backupPath"
+        }
+    }
+}
+
+function New-FrameGenNGToggleItem {
+    param(
+        [Parameter(Mandatory)][string]$Label,
+        [Parameter(Mandatory)][string]$Tooltip,
+        [Parameter(Mandatory)][string]$VisibleCondition
+    )
+
+    return [pscustomobject][ordered]@{
+        version = '0.40'; label = $Label; tooltip = $Tooltip
+        setting = $script:SettingsEnabledKey; interactive = $true; condition_always_off = $false
+        condition_not_shipping = $false; condition_simplemenu = ''; condition_visible = $VisibleCondition
+        condition_enabled = ''; itemType = 'checkbox'; component = 'OptionsCheckbox'; separateLabel = $true
+        manualApply = $false; manualLua = ''; lua = ''; luaOff = ''; valueOn = $true; valueOff = $false
+        search = @('label', 'caption', 'tooltip', 'setting')
     }
 }
 
@@ -718,7 +819,7 @@ function Get-GraphicsLayoutPatch {
             (Get-FrameGenNGJsonProperty -Object $_ -Name 'setting') -eq 'GraphicAntialiasType'
         }).Count -eq 1
     })
-    if ($groups.Count -ne 1) { throw "BeamNG DLSS group is missing or ambiguous: $($groups.Count)" }
+    if ($groups.Count -ne 1) { throw "BeamNG upscaling group is missing or ambiguous: $($groups.Count)" }
 
     $groupItems = @(Get-FrameGenNGJsonProperty -Object $groups[0] -Name 'items')
     $alreadyPatched = @($groupItems | Where-Object {
@@ -731,23 +832,18 @@ function Get-GraphicsLayoutPatch {
         [pscustomobject][ordered]@{
             version = '0.40'; label = $text.Heading; interactive = $false
             condition_always_off = $false; condition_not_shipping = $false; condition_simplemenu = ''
-            condition_visible = 'GraphicDLSSSelected'; condition_enabled = ''; itemType = 'heading'
+            condition_visible = 'FrameGenNGSupportedUpscalerSelected'; condition_enabled = ''; itemType = 'heading'
             component = 'OptionsHeading'; icon = '_empty'; variant = 'h4'; search = @('label')
         },
-        [pscustomobject][ordered]@{
-            version = '0.40'; label = $text.Enabled
-            tooltip = $text.EnabledTooltip
-            setting = $script:SettingsEnabledKey; interactive = $true; condition_always_off = $false
-            condition_not_shipping = $false; condition_simplemenu = ''; condition_visible = 'GraphicDLSSSelected'
-            condition_enabled = ''; itemType = 'checkbox'; component = 'OptionsCheckbox'; separateLabel = $true
-            manualApply = $false; manualLua = ''; lua = ''; luaOff = ''; valueOn = $true; valueOff = $false
-            search = @('label', 'caption', 'tooltip', 'setting')
-        },
+        (New-FrameGenNGToggleItem -Label $text.Enabled -Tooltip $text.EnabledTooltip `
+            -VisibleCondition 'FrameGenNGMultiFrameUpscalerSelected'),
+        (New-FrameGenNGToggleItem -Label "$($text.Enabled) (x2)" -Tooltip $text.EnabledTooltip `
+            -VisibleCondition 'FrameGenNGFixedMultiplierUpscalerSelected'),
         [pscustomobject][ordered]@{
             version = '0.40'; label = $text.Multiplier
             tooltip = $text.MultiplierTooltip
             setting = $script:SettingsMultiplierKey; interactive = $true; condition_always_off = $false
-            condition_not_shipping = $false; condition_simplemenu = ''; condition_visible = 'GraphicDLSSSelected'
+            condition_not_shipping = $false; condition_simplemenu = ''; condition_visible = 'FrameGenNGMultiFrameUpscalerSelected'
             condition_enabled = $script:SettingsEnabledKey; itemType = 'options'; component = 'BngSmartSelect'
             separateLabel = $true; manualApply = $false; manualLua = ''; optionsSource = ''
             options = @(
@@ -770,7 +866,7 @@ function Get-GraphicsLayoutPatch {
             $inserted = $true
         }
     }
-    if (-not $inserted) { throw 'Unable to find the FrameGenNG control insertion point after the DLSS settings.' }
+    if (-not $inserted) { throw 'Unable to find the FrameGenNG control insertion point after the upscaling settings.' }
     Set-FrameGenNGJsonProperty -Object $groups[0] -Name 'items' -Value $newItems.ToArray()
     return $layout
 }
@@ -778,13 +874,40 @@ function Get-GraphicsLayoutPatch {
 function Get-ConditionsPatch {
     param([Parameter(Mandatory)][string]$SourcePath)
     $conditions = Get-Content -LiteralPath $SourcePath -Raw
-    if ($conditions -match '\bGraphicDLSSSelected\s*\(') { return $conditions }
+    $requiredConditions = @(
+        'FrameGenNGSupportedUpscalerSelected',
+        'FrameGenNGMultiFrameUpscalerSelected',
+        'FrameGenNGFixedMultiplierUpscalerSelected'
+    )
+    $missingConditions = @($requiredConditions | Where-Object { $conditions -notmatch "\b$($_)\s*\(" })
+    if ($missingConditions.Count -eq 0) {
+        return $conditions.Replace(
+            'values.vulkanEnabled',
+            '(String(SysInfo.videoAdapter.value || "").toLowerCase() === "vulkan")'
+        )
+    }
+
     $anchor = '(?ms)(    GraphicAntialiasEnabled\(values\) \{\r?\n      return values\.GraphicAntialiasType !== "off"\r?\n    \},)'
-    if ($conditions -notmatch $anchor) { throw 'Unable to find the DLSS condition insertion point.' }
+    if ($conditions -notmatch $anchor) { throw 'Unable to find the upscaling condition insertion point.' }
     $addition = @'
 $1
-    GraphicDLSSSelected(values) {
-      return values.GraphicAntialiasType === "dlss"
+    FrameGenNGSupportedUpscalerSelected(values) {
+      const isVulkan = String(SysInfo.videoAdapter.value || "").toLowerCase() === "vulkan"
+      const supportedUpscalers = isVulkan
+        ? ["fsr3", "fsr4"]
+        : ["dlss", "fsr3", "fsr4", "xess"]
+      return supportedUpscalers.includes(values.GraphicAntialiasType)
+    },
+    FrameGenNGMultiFrameUpscalerSelected(values) {
+      const isVulkan = String(SysInfo.videoAdapter.value || "").toLowerCase() === "vulkan"
+      return !isVulkan && values.GraphicAntialiasType === "dlss"
+    },
+    FrameGenNGFixedMultiplierUpscalerSelected(values) {
+      const isVulkan = String(SysInfo.videoAdapter.value || "").toLowerCase() === "vulkan"
+      const supportedUpscalers = isVulkan
+        ? ["fsr3", "fsr4"]
+        : ["fsr3", "fsr4", "xess"]
+      return supportedUpscalers.includes(values.GraphicAntialiasType)
     },
 '@
     return [regex]::Replace($conditions, $anchor, $addition, 1)
@@ -808,11 +931,17 @@ function Get-HdrEncoderPatch {
     }
 
     $bridge = @'
+#if defined(BNG_VULKAN) || defined(__spirv__)
+static const uint OutputMode_scRGB = 1;
+static const uint OutputMode_HDR10 = 2;
+static const uint OutputMode_HDR10Native = 2;
+#else
 static const uint OutputMode_scRGB = 0xFFFFFFFEu;
 static const uint OutputMode_HDR10 = 1;
 static const uint OutputMode_HDR10Native = 2;
+#endif
 
-// FrameGenNG keeps BeamNG mode 1 aligned with its HDR10 swapchain bridge.
+// Vulkan keeps BeamNG's native scRGB modes; DX12 uses the HDR10 swapchain bridge.
 bool FrameGenNGIsHdr10Output(uint outputMode)
 {
    return outputMode == OutputMode_HDR10 || outputMode == OutputMode_HDR10Native;
@@ -820,8 +949,8 @@ bool FrameGenNGIsHdr10Output(uint outputMode)
 '@
 
     $patched = $source.Replace($hdr10Comparison, 'FrameGenNGIsHdr10Output(outputMode)')
-    $patched = $patched.Replace($originalScRgbConstant, $bridge)
     $patched = $patched.Replace($originalHdr10Constant, '')
+    $patched = $patched.Replace($originalScRgbConstant, $bridge)
     return $patched
 }
 
@@ -971,9 +1100,9 @@ function Install-FrameGenNG {
     $installationPlan = New-FrameGenNGInstallationPlan -PackageRoot $packageRoot -GameRoot $gameRootResolved -UserRoot $userRoot -Profile $gpu.Profile
     Remove-ValidatedLegacyUpdateResidue -Plan $installationPlan
     Assert-FrameGenNGInstallationPlan -Plan $installationPlan
-    $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $backupId = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
     $dataRoot = Get-FrameGenNGDataRoot -UserRoot $userRoot
-    $backupRoot = Join-Path $dataRoot "backups\$timestamp"
+    $backupRoot = Join-Path $dataRoot "backups\$backupId"
     $redundantStatePath = Join-Path $backupRoot 'installation-state.json'
 
     $nativeItems = @($installationPlan.NativeItems)
@@ -1030,7 +1159,7 @@ function Install-FrameGenNG {
             Get-OriginalSettingState -Settings $settings -Name $script:SettingsEnabledKey
             Get-OriginalSettingState -Settings $settings -Name $script:SettingsMultiplierKey
         )
-        Set-FrameGenNGJsonProperty -Object $settings -Name $script:SettingsEnabledKey -Value $true
+        Set-FrameGenNGJsonProperty -Object $settings -Name $script:SettingsEnabledKey -Value $false
         Set-FrameGenNGJsonProperty -Object $settings -Name $script:SettingsMultiplierKey -Value 2
         Write-JsonFile -Value $settings -Path $settingsPath -Depth 100
         Clear-BeamNGShaderCache -UserRoot $userRoot
@@ -1106,11 +1235,19 @@ function Uninstall-FrameGenNG {
         New-FrameGenNGRestorePoint -UserRoot $userRoot -Reason 'before-uninstall' -GameRoot $gameRootResolved -LauncherIni $LauncherIni | Out-Null
     }
 
-    $recoveryRoot = Join-Path (Get-FrameGenNGDataRoot -UserRoot $userRoot) ("recovery-before-uninstall-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    $dataRoot = Get-FrameGenNGDataRoot -UserRoot $userRoot
+    $backupRoot = [System.IO.Path]::GetFullPath([string]$state.backupRoot).TrimEnd('\')
+    if (-not (Test-PathUnderRoot -Path $backupRoot -Roots @($dataRoot))) {
+        throw "The recorded backup folder is outside the FrameGenNG data folder: $backupRoot"
+    }
+    Assert-TrackedTargetBackupsAvailable -Targets @($state.targets) -BackupRoot $backupRoot
+
+    $recoveryId = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
+    $recoveryRoot = Join-Path $dataRoot "recovery-before-uninstall-$recoveryId"
     $reverseTargets = @($state.targets)
     [array]::Reverse($reverseTargets)
     foreach ($target in $reverseTargets) {
-        Restore-TrackedTarget -Target $target -BackupRoot ([string]$state.backupRoot) -AllowedRoots @($gameRootResolved, $userRoot) -RecoveryRoot $recoveryRoot -GameRoot $gameRootResolved
+        Restore-TrackedTarget -Target $target -BackupRoot $backupRoot -AllowedRoots @($gameRootResolved, $userRoot) -RecoveryRoot $recoveryRoot -GameRoot $gameRootResolved
     }
 
     $settingsPath = [string]$state.settingsPath
@@ -1127,7 +1264,7 @@ function Uninstall-FrameGenNG {
     $archiveState = Join-Path (Split-Path -Parent $statePath) ("uninstalled-state-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.json')
     Copy-Item -LiteralPath ([string]$stateRecord.path) -Destination $archiveState -Force
     if (Test-Path -LiteralPath $statePath -PathType Leaf) { Remove-Item -LiteralPath $statePath -Force }
-    $redundantStatePath = Join-Path ([string]$state.backupRoot) 'installation-state.json'
+    $redundantStatePath = Join-Path $backupRoot 'installation-state.json'
     if (Test-Path -LiteralPath $redundantStatePath -PathType Leaf) { Remove-Item -LiteralPath $redundantStatePath -Force }
     Invoke-FrameGenNGTechnicalBackupRetention -UserRoot $userRoot
     return [pscustomobject][ordered]@{
@@ -1154,7 +1291,7 @@ function Reinstall-FrameGenNG {
     $profile = [string]$state.profile
     $settingsPath = [string]$state.settingsPath
     $settings = ConvertFrom-FrameGenNGJsonFile -Path $settingsPath
-    $enabled = if (Test-FrameGenNGJsonProperty -Object $settings -Name $script:SettingsEnabledKey) { [bool](Get-FrameGenNGJsonProperty -Object $settings -Name $script:SettingsEnabledKey) } else { $true }
+    $enabled = if (Test-FrameGenNGJsonProperty -Object $settings -Name $script:SettingsEnabledKey) { [bool](Get-FrameGenNGJsonProperty -Object $settings -Name $script:SettingsEnabledKey) } else { $false }
     $multiplier = if (Test-FrameGenNGJsonProperty -Object $settings -Name $script:SettingsMultiplierKey) { [int](Get-FrameGenNGJsonProperty -Object $settings -Name $script:SettingsMultiplierKey) } else { 2 }
     New-FrameGenNGRestorePoint -UserRoot $userRoot -Reason 'before-reinstall' -GameRoot $gameRootResolved -LauncherIni $LauncherIni | Out-Null
     Uninstall-FrameGenNG -GameRoot $gameRootResolved -LauncherIni $LauncherIni -SkipRestorePoint | Out-Null

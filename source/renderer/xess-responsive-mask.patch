@@ -1,0 +1,178 @@
+diff --git a/FrameGenNGEngine/inputs/XeSS_Base.cpp b/FrameGenNGEngine/inputs/XeSS_Base.cpp
+index 363ae5b..bf5613a 100644
+--- a/FrameGenNGEngine/inputs/XeSS_Base.cpp
++++ b/FrameGenNGEngine/inputs/XeSS_Base.cpp
+@@ -5,6 +5,7 @@ std::unordered_map<xess_context_handle_t, NVSDK_NGX_Parameter*> _nvParams;
+ std::unordered_map<xess_context_handle_t, NVSDK_NGX_Handle*> _contexts;
+ std::unordered_map<xess_context_handle_t, Scale> _motionScales;
+ std::unordered_map<xess_context_handle_t, Scale> _jitterScales;
++std::unordered_map<xess_context_handle_t, float> _maxResponsiveMaskValues;
+ std::unordered_map<xess_context_handle_t, xess_d3d12_init_params_t> _d3d12InitParams;
+ std::unordered_map<xess_context_handle_t, xess_vk_init_params_t> _vkInitParams;
+ std::unordered_map<xess_context_handle_t, xess_d3d11_init_params_t> _d3d11InitParams;
+diff --git a/FrameGenNGEngine/inputs/XeSS_Base.h b/FrameGenNGEngine/inputs/XeSS_Base.h
+index 9c90308..2028029 100644
+--- a/FrameGenNGEngine/inputs/XeSS_Base.h
++++ b/FrameGenNGEngine/inputs/XeSS_Base.h
+@@ -16,6 +16,7 @@ extern std::unordered_map<xess_context_handle_t, NVSDK_NGX_Parameter*> _nvParams
+ extern std::unordered_map<xess_context_handle_t, NVSDK_NGX_Handle*> _contexts;
+ extern std::unordered_map<xess_context_handle_t, Scale> _motionScales;
+ extern std::unordered_map<xess_context_handle_t, Scale> _jitterScales;
++extern std::unordered_map<xess_context_handle_t, float> _maxResponsiveMaskValues;
+ extern std::unordered_map<xess_context_handle_t, xess_d3d12_init_params_t> _d3d12InitParams;
+ extern std::unordered_map<xess_context_handle_t, xess_vk_init_params_t> _vkInitParams;
+ extern std::unordered_map<xess_context_handle_t, xess_d3d11_init_params_t> _d3d11InitParams;
+diff --git a/FrameGenNGEngine/inputs/XeSS_Common.cpp b/FrameGenNGEngine/inputs/XeSS_Common.cpp
+index 4e7aa95..05d7fe3 100644
+--- a/FrameGenNGEngine/inputs/XeSS_Common.cpp
++++ b/FrameGenNGEngine/inputs/XeSS_Common.cpp
+@@ -5,6 +5,8 @@
+ #include <proxies/XeSS_Proxy.h>
+ #include <nvsdk_ngx_vk.h>
+ 
++#include <cmath>
++
+ static std::optional<float> GetQualityOverrideRatio(const xess_quality_settings_t input)
+ {
+     std::optional<float> output;
+@@ -146,6 +148,7 @@ xess_result_t hk_xessDestroyContext(xess_context_handle_t hContext)
+ 
+     _contexts.erase(hContext);
+     _nvParams.erase(hContext);
++    _maxResponsiveMaskValues.erase(hContext);
+ 
+     return XESS_RESULT_SUCCESS;
+ }
+@@ -413,6 +416,35 @@ xess_result_t hk_xessSetExposureMultiplier(xess_context_handle_t hContext, float
+     return XESS_RESULT_SUCCESS;
+ }
+ 
++xess_result_t hk_xessSetMaxResponsiveMaskValue(xess_context_handle_t hContext, float value)
++{
++    LOG_DEBUG("hContext: {}, value: {}", (size_t) hContext, value);
++
++    if (!_nvParams.contains(hContext))
++        return XESS_RESULT_ERROR_INVALID_CONTEXT;
++
++    if (!std::isfinite(value) || value < 0.0f || value > 1.0f)
++        return XESS_RESULT_ERROR_INVALID_ARGUMENT;
++
++    _maxResponsiveMaskValues[hContext] = value;
++    return XESS_RESULT_SUCCESS;
++}
++
++xess_result_t hk_xessGetMaxResponsiveMaskValue(xess_context_handle_t hContext, float* pValue)
++{
++    LOG_DEBUG("hContext: {}", (size_t) hContext);
++
++    if (pValue == nullptr)
++        return XESS_RESULT_ERROR_INVALID_ARGUMENT;
++
++    const auto value = _maxResponsiveMaskValues.find(hContext);
++    if (value == _maxResponsiveMaskValues.end())
++        return XESS_RESULT_ERROR_INVALID_CONTEXT;
++
++    *pValue = value->second;
++    return XESS_RESULT_SUCCESS;
++}
++
+ xess_result_t hk_xessSetContextParameterF()
+ {
+     LOG_DEBUG("");
+diff --git a/FrameGenNGEngine/inputs/XeSS_Common.h b/FrameGenNGEngine/inputs/XeSS_Common.h
+index 0f5cc38..23e403a 100644
+--- a/FrameGenNGEngine/inputs/XeSS_Common.h
++++ b/FrameGenNGEngine/inputs/XeSS_Common.h
+@@ -28,6 +28,8 @@ xess_result_t hk_xessGetOptimalInputResolution(xess_context_handle_t hContext, c
+ xess_result_t hk_xessGetVelocityScale(xess_context_handle_t hContext, float* pX, float* pY);
+ xess_result_t hk_xessSetJitterScale(xess_context_handle_t hContext, float x, float y);
+ xess_result_t hk_xessSetExposureMultiplier(xess_context_handle_t hContext, float scale);
++xess_result_t hk_xessSetMaxResponsiveMaskValue(xess_context_handle_t hContext, float value);
++xess_result_t hk_xessGetMaxResponsiveMaskValue(xess_context_handle_t hContext, float* pValue);
+ xess_result_t hk_xessSetContextParameterF();
+ xess_result_t hk_xessAILGetDecision();
+ xess_result_t hk_xessAILGetVersion();
+diff --git a/FrameGenNGEngine/inputs/XeSS_Dx12.cpp b/FrameGenNGEngine/inputs/XeSS_Dx12.cpp
+index 08931a7..ce4dd14 100644
+--- a/FrameGenNGEngine/inputs/XeSS_Dx12.cpp
++++ b/FrameGenNGEngine/inputs/XeSS_Dx12.cpp
+@@ -125,6 +125,7 @@ xess_result_t hk_xessD3D12CreateContext(ID3D12Device* pDevice, xess_context_hand
+ 
+     _nvParams[*phContext] = params;
+     _motionScales[*phContext] = { 1.0, 1.0 };
++    _maxResponsiveMaskValues[*phContext] = 1.0f;
+ 
+     return XESS_RESULT_SUCCESS;
+ }
+diff --git a/FrameGenNGEngine/proxies/XeSS_Proxy.h b/FrameGenNGEngine/proxies/XeSS_Proxy.h
+index 22e053b..2cf86f1 100644
+--- a/FrameGenNGEngine/proxies/XeSS_Proxy.h
++++ b/FrameGenNGEngine/proxies/XeSS_Proxy.h
+@@ -48,6 +48,8 @@ typedef decltype(&xessGetJitterScale) PFN_xessGetJitterScale;
+ typedef decltype(&xessGetOptimalInputResolution) PFN_xessGetOptimalInputResolution;
+ typedef decltype(&xessSetExposureMultiplier) PFN_xessSetExposureMultiplier;
+ typedef decltype(&xessSetJitterScale) PFN_xessSetJitterScale;
++typedef decltype(&xessSetMaxResponsiveMaskValue) PFN_xessSetMaxResponsiveMaskValue;
++typedef decltype(&xessGetMaxResponsiveMaskValue) PFN_xessGetMaxResponsiveMaskValue;
+ 
+ typedef decltype(&xessD3D12GetResourcesToDump) PFN_xessD3D12GetResourcesToDump;
+ typedef decltype(&xessD3D12GetProfilingData) PFN_xessD3D12GetProfilingData;
+@@ -101,6 +103,8 @@ struct XeSSModule
+     PFN_xessGetOptimalInputResolution xessGetOptimalInputResolution = nullptr;
+     PFN_xessSetExposureMultiplier xessSetExposureMultiplier = nullptr;
+     PFN_xessSetJitterScale xessSetJitterScale = nullptr;
++    PFN_xessSetMaxResponsiveMaskValue xessSetMaxResponsiveMaskValue = nullptr;
++    PFN_xessGetMaxResponsiveMaskValue xessGetMaxResponsiveMaskValue = nullptr;
+ 
+     PFN_xessD3D12GetResourcesToDump xessD3D12GetResourcesToDump = nullptr;
+     PFN_xessD3D12GetProfilingData xessD3D12GetProfilingData = nullptr;
+@@ -305,6 +309,12 @@ class XeSSProxy
+                 _module.dll, "xessSetExposureMultiplier");
+             _module.xessSetJitterScale =
+                 (PFN_xessSetJitterScale) KernelBaseProxy::GetProcAddress_()(_module.dll, "xessSetJitterScale");
++            _module.xessSetMaxResponsiveMaskValue =
++                (PFN_xessSetMaxResponsiveMaskValue) KernelBaseProxy::GetProcAddress_()(
++                    _module.dll, "xessSetMaxResponsiveMaskValue");
++            _module.xessGetMaxResponsiveMaskValue =
++                (PFN_xessGetMaxResponsiveMaskValue) KernelBaseProxy::GetProcAddress_()(
++                    _module.dll, "xessGetMaxResponsiveMaskValue");
+ 
+             _module.xessD3D12GetResourcesToDump = (PFN_xessD3D12GetResourcesToDump) KernelBaseProxy::GetProcAddress_()(
+                 _module.dll, "xessD3D12GetResourcesToDump");
+@@ -388,6 +398,12 @@ class XeSSProxy
+                                                                                    "xessSetExposureMultiplier");
+             _module_hooked.xessSetJitterScale =
+                 (PFN_xessSetJitterScale) KernelBaseProxy::GetProcAddress_()(_module_hooked.dll, "xessSetJitterScale");
++            _module_hooked.xessSetMaxResponsiveMaskValue =
++                (PFN_xessSetMaxResponsiveMaskValue) KernelBaseProxy::GetProcAddress_()(
++                    _module_hooked.dll, "xessSetMaxResponsiveMaskValue");
++            _module_hooked.xessGetMaxResponsiveMaskValue =
++                (PFN_xessGetMaxResponsiveMaskValue) KernelBaseProxy::GetProcAddress_()(
++                    _module_hooked.dll, "xessGetMaxResponsiveMaskValue");
+ 
+             _module_hooked.xessD3D12GetResourcesToDump =
+                 (PFN_xessD3D12GetResourcesToDump) KernelBaseProxy::GetProcAddress_()(_module_hooked.dll,
+@@ -498,6 +514,14 @@ class XeSSProxy
+             if (_module_hooked.xessSetJitterScale != nullptr)
+                 DetourAttach(&(PVOID&) _module_hooked.xessSetJitterScale, hk_xessSetJitterScale);
+ 
++            if (_module_hooked.xessSetMaxResponsiveMaskValue != nullptr)
++                DetourAttach(&(PVOID&) _module_hooked.xessSetMaxResponsiveMaskValue,
++                             hk_xessSetMaxResponsiveMaskValue);
++
++            if (_module_hooked.xessGetMaxResponsiveMaskValue != nullptr)
++                DetourAttach(&(PVOID&) _module_hooked.xessGetMaxResponsiveMaskValue,
++                             hk_xessGetMaxResponsiveMaskValue);
++
+             if (_module_hooked.xessD3D12GetResourcesToDump != nullptr)
+                 DetourAttach(&(PVOID&) _module_hooked.xessD3D12GetResourcesToDump, hk_xessD3D12GetResourcesToDump);
+ 
+@@ -565,6 +589,8 @@ class XeSSProxy
+                 _module_hooked.xessGetOptimalInputResolution = nullptr;
+                 _module_hooked.xessSetExposureMultiplier = nullptr;
+                 _module_hooked.xessSetJitterScale = nullptr;
++                _module_hooked.xessSetMaxResponsiveMaskValue = nullptr;
++                _module_hooked.xessGetMaxResponsiveMaskValue = nullptr;
+                 _module_hooked.xessD3D12GetResourcesToDump = nullptr;
+                 _module_hooked.xessD3D12GetProfilingData = nullptr;
+                 _module_hooked.xessSetContextParameterF = nullptr;

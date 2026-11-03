@@ -53,7 +53,7 @@ function Remove-FrameGenNGJsonProperty {
     )
 
     if ($Object -is [System.Collections.IDictionary]) {
-        $Object.Remove($Name)
+        [void]$Object.Remove($Name)
         return
     }
     $Object.PSObject.Properties.Remove($Name)

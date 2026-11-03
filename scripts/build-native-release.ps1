@@ -13,7 +13,14 @@ $script:SourceRoot = Join-Path $script:CacheRoot 'upstream'
 $script:EngineRoot = Join-Path $script:SourceRoot 'FrameGenNGEngine'
 $script:PayloadDll = Join-Path $script:RepoRoot 'payload\Bin64\dxgi.dll'
 $script:ManifestPath = Join-Path $script:RepoRoot 'payload\manifest.json'
-$script:PatchPath = Join-Path $script:RendererRoot 'framegenng-renderer.patch'
+$script:PatchPaths = @(
+    Join-Path $script:RendererRoot 'framegenng-renderer.patch'
+    Join-Path $script:RendererRoot 'xess-responsive-mask.patch'
+    Join-Path $script:RendererRoot 'vulkan-frame-generation.patch'
+    Join-Path $script:RendererRoot 'vulkan-output-guard.patch'
+    Join-Path $script:RendererRoot 'vulkan-unsupported-passthrough.patch'
+    Join-Path $script:RendererRoot 'vulkan-shutdown-boundary.patch'
+)
 $script:ResourceTemplatePath = Join-Path $script:RendererRoot 'FrameGenNG.rc'
 
 function Invoke-NativeCommand {
@@ -235,16 +242,18 @@ function Apply-FrameGenNGNormalization {
         -Destination (Join-Path $script:EngineRoot 'FrameGenNG.rc') -Force
 }
 
-function Apply-RendererPatch {
+function Apply-RendererPatches {
     param([Parameter(Mandatory)] [string]$GitPath)
 
-    Write-Host 'Applying the FrameGenNG renderer patch...'
-    Invoke-NativeCommand -FilePath $GitPath -Arguments @(
-        '-C', $script:SourceRoot, 'apply', '--check', $script:PatchPath
-    )
-    Invoke-NativeCommand -FilePath $GitPath -Arguments @(
-        '-C', $script:SourceRoot, 'apply', $script:PatchPath
-    )
+    foreach ($patchPath in $script:PatchPaths) {
+        Write-Host "Applying renderer patch $([System.IO.Path]::GetFileName($patchPath))..."
+        Invoke-NativeCommand -FilePath $GitPath -Arguments @(
+            '-C', $script:SourceRoot, 'apply', '--check', $patchPath
+        )
+        Invoke-NativeCommand -FilePath $GitPath -Arguments @(
+            '-C', $script:SourceRoot, 'apply', $patchPath
+        )
+    }
 }
 
 function Build-NativeRenderer {
@@ -318,8 +327,10 @@ function Publish-TestPackage {
     }
 }
 
-if (-not (Test-Path -LiteralPath $script:PatchPath -PathType Leaf)) {
-    throw "Renderer patch is missing: $script:PatchPath"
+foreach ($patchPath in $script:PatchPaths) {
+    if (-not (Test-Path -LiteralPath $patchPath -PathType Leaf)) {
+        throw "Renderer patch is missing: $patchPath"
+    }
 }
 if (-not (Test-Path -LiteralPath $script:ResourceTemplatePath -PathType Leaf)) {
     throw "Renderer resource template is missing: $script:ResourceTemplatePath"
@@ -331,7 +342,7 @@ $msBuildPath = Get-MSBuildPath
 
 Initialize-UpstreamCache -GitPath $gitPath -Metadata $metadata
 Apply-FrameGenNGNormalization
-Apply-RendererPatch -GitPath $gitPath
+Apply-RendererPatches -GitPath $gitPath
 $builtDll = Build-NativeRenderer -MSBuildPath $msBuildPath
 $nativeHash = (Get-FileHash -LiteralPath $builtDll -Algorithm SHA256).Hash.ToLowerInvariant()
 $package = Publish-TestPackage -BuiltDll $builtDll

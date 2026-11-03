@@ -1,0 +1,23 @@
+diff --git a/FrameGenNGEngine/hooks/Vulkan_Hooks.cpp b/FrameGenNGEngine/hooks/Vulkan_Hooks.cpp
+--- a/FrameGenNGEngine/hooks/Vulkan_Hooks.cpp
++++ b/FrameGenNGEngine/hooks/Vulkan_Hooks.cpp
+@@ -1346,6 +1346,19 @@ PFN_vkVoidFunction VulkanHooks::OriginalGetInstanceProcAddr(VkInstance instance,
+ 
+ void VulkanHooks::Hook(HMODULE vulkan1)
+ {
++    auto& state = State::Instance();
++    if (!IsSupportedBeamNGVulkanFrameGenerationOutput(state.activeFgOutput))
++    {
++        LOG_INFO("Vulkan passthrough enabled for unsupported Frame Generation output {}",
++                 magic_enum::enum_name(state.activeFgOutput));
++
++        Config::Instance()->FGEnabled.set_volatile_value(false);
++        state.activeFgInput = FGInput::NoFG;
++        state.activeFgOutput = FGOutput::NoFG;
++        state.activeFgNvngx = FGNvngxReplacement::None;
++        return;
++    }
++
+     if (vulkanModule == nullptr)
+         vulkanModule = vulkan1;
+ 

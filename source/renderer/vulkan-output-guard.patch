@@ -1,0 +1,69 @@
+diff --git a/FrameGenNGEngine/hooks/Vulkan_Hooks.cpp b/FrameGenNGEngine/hooks/Vulkan_Hooks.cpp
+index c070135..909c25b 100644
+--- a/FrameGenNGEngine/hooks/Vulkan_Hooks.cpp
++++ b/FrameGenNGEngine/hooks/Vulkan_Hooks.cpp
+@@ -313,6 +313,25 @@ static void HookDevice(VkDevice InDevice)
+     }
+ }
+ 
++static bool IsSupportedBeamNGVulkanFrameGenerationOutput(FGOutput output)
++{
++    return output == FGOutput::FSRFG;
++}
++
++static void DisableUnsupportedBeamNGVulkanFrameGeneration()
++{
++    const auto output = State::Instance().activeFgOutput;
++    if (IsSupportedBeamNGVulkanFrameGenerationOutput(output) || output == FGOutput::NoFG)
++        return;
++
++    auto* config = Config::Instance();
++    if (config->IsFGEnabled())
++        LOG_INFO("Vulkan Frame Generation disabled for unsupported {} output; use FidelityFX Frame Generation",
++                 magic_enum::enum_name(output));
++
++    config->FGEnabled.set_volatile_value(false);
++}
++
+ // Created with the device as the output's queues have to be added to it
+ static IFGFeature_Vk* CreateFGFeature()
+ {
+@@ -320,6 +339,12 @@ static IFGFeature_Vk* CreateFGFeature()
+ 
+     const bool supportedInput = state.activeFgInput == FGInput::DLSSG || state.activeFgInput == FGInput::Upscaler;
+ 
++    if (!IsSupportedBeamNGVulkanFrameGenerationOutput(state.activeFgOutput))
++    {
++        DisableUnsupportedBeamNGVulkanFrameGeneration();
++        return nullptr;
++    }
++
+     if (state.currentVkFG != nullptr || !supportedInput)
+         return state.currentVkFG;
+ 
+@@ -334,13 +359,6 @@ static IFGFeature_Vk* CreateFGFeature()
+         else
+             LOG_ERROR("Can't load amd_fidelityfx_vk.dll, FSR FG won't be available");
+     }
+-    else if (state.activeFgOutput == FGOutput::DLSSG)
+-    {
+-        if (StreamlineProxy::InitWithVulkan())
+-            state.currentVkFG = new DLSSG_Vk();
+-        else
+-            LOG_ERROR("Can't init Streamline, DLSSG won't be available");
+-    }
+     else if (state.activeFgOutput == FGOutput::Reprojection)
+     {
+         state.currentVkFG = new Reprojection_Vk();
+@@ -791,7 +809,10 @@ static VkResult hkvkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* pPres
+ 
+     if (!dxgiBacked)
+     {
+-        FGHooks::PollBeamNGFrameGenerationSettings();
++        if (IsSupportedBeamNGVulkanFrameGenerationOutput(State::Instance().activeFgOutput))
++            FGHooks::PollBeamNGFrameGenerationSettings();
++        else
++            DisableUnsupportedBeamNGVulkanFrameGeneration();
+ 
+         if (fg != nullptr && FGHooks::BeamNGShutdownRequested())
+         {

@@ -30,6 +30,19 @@ function Format-StatusText {
     return "Installation files changed`r`nUse Uninstall, then Install to restore $broken item(s)."
 }
 
+function Get-UninstallBackupPath {
+    param([AllowNull()]$Summary)
+
+    foreach ($item in @($Summary)) {
+        if ($null -eq $item) { continue }
+        $backupProperty = $item.PSObject.Properties['backupKept']
+        if ($null -ne $backupProperty) {
+            return [string]$backupProperty.Value
+        }
+    }
+    return $null
+}
+
 function Invoke-CommandLineAction {
     switch ($Action) {
         'Install' {
@@ -43,7 +56,10 @@ function Invoke-CommandLineAction {
         'Uninstall' {
             $uninstallSummary = Uninstall-FrameGenNG -GameRoot $GameRoot -LauncherIni $LauncherIni
             Write-Host 'FrameGenNG uninstalled. The original files were restored.' -ForegroundColor Green
-            Write-Host "Backup preserved: $($uninstallSummary.backupKept)"
+            $backupKept = Get-UninstallBackupPath -Summary $uninstallSummary
+            if (-not [string]::IsNullOrWhiteSpace($backupKept)) {
+                Write-Host "Backup preserved: $backupKept"
+            }
         }
         'Status' {
             Get-FrameGenNGStatus -GameRoot $GameRoot -LauncherIni $LauncherIni | ConvertTo-Json -Depth 10
@@ -602,7 +618,7 @@ $installButton.Add_Click({
         Write-ManagerLog -Message 'Installing…'
         $installationState = Install-FrameGenNG -GameRoot $script:resolvedGameRoot -LauncherIni $LauncherIni -Profile $Profile
         Write-ManagerLog -Message "Installation complete: $($installationState.profile)."
-        [System.Windows.Forms.MessageBox]::Show('FrameGenNG is installed. Start BeamNG in DirectX 12 and enable DLSS.', 'Installation complete', 'OK', 'Information') | Out-Null
+        [System.Windows.Forms.MessageBox]::Show('FrameGenNG is installed with Frame Generation disabled. Start BeamNG in DirectX 12, select a supported upscaler, then enable Frame Generation in the graphics settings.', 'Installation complete', 'OK', 'Information') | Out-Null
     } catch {
         Write-ManagerLog -Message "Error: $($_.Exception.Message)"
         [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Installation failed', 'OK', 'Error') | Out-Null
@@ -637,7 +653,9 @@ $uninstallButton.Add_Click({
         Set-BusyState -Busy $true
         Write-ManagerLog -Message 'Restoring original files…'
         $uninstallSummary = Uninstall-FrameGenNG -GameRoot $script:resolvedGameRoot -LauncherIni $LauncherIni
-        Write-ManagerLog -Message "Uninstall complete. Backup: $($uninstallSummary.backupKept)"
+        $backupKept = Get-UninstallBackupPath -Summary $uninstallSummary
+        $backupDetails = if ([string]::IsNullOrWhiteSpace($backupKept)) { '' } else { " Backup: $backupKept" }
+        Write-ManagerLog -Message "Uninstall complete.$backupDetails"
         [System.Windows.Forms.MessageBox]::Show('FrameGenNG has been uninstalled. Files changed outside FrameGenNG were preserved and recovery copies were kept.', 'Uninstall complete', 'OK', 'Information') | Out-Null
     } catch {
         Write-ManagerLog -Message "Error: $($_.Exception.Message)"

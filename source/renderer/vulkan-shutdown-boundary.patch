@@ -1,0 +1,94 @@
+diff --git a/FrameGenNGEngine/hooks/Vulkan_Hooks.cpp b/FrameGenNGEngine/hooks/Vulkan_Hooks.cpp
+index d790b65..b008625 100644
+--- a/FrameGenNGEngine/hooks/Vulkan_Hooks.cpp
++++ b/FrameGenNGEngine/hooks/Vulkan_Hooks.cpp
+@@ -327,16 +327,38 @@ static void DisableUnsupportedBeamNGVulkanFrameGeneration()
+     auto* config = Config::Instance();
+     if (config->IsFGEnabled())
+         LOG_INFO("Vulkan Frame Generation disabled for unsupported {} output; use FidelityFX Frame Generation",
+                  magic_enum::enum_name(output));
+ 
+     config->FGEnabled.set_volatile_value(false);
+ }
+ 
++static std::atomic_bool beamNGVulkanShutdownPrepared = false;
++
++static void PrepareBeamNGVulkanShutdownIfRequested(const char* trigger)
++{
++    if (!FGHooks::BeamNGShutdownRequested() || beamNGVulkanShutdownPrepared.exchange(true))
++        return;
++
++    FGHooks::TraceBeamNGShutdownEvent(trigger);
++    FGHooks::TraceBeamNGShutdownEvent("vulkan-preexit-cleanup-started");
++
++    if (auto fg = State::Instance().currentVkFG; fg != nullptr)
++        fg->PrepareForShutdown();
++
++    // Release every tracked Vulkan upscaler while the device and its command
++    // pools are still valid. BeamNG may stop presenting immediately after its
++    // pre-exit signal, so vkDestroySwapchainKHR is the final reliable boundary.
++    FGHooks::TraceBeamNGShutdownEvent("vulkan-upscaler-precleanup-started");
++    ReleaseBeamNGVulkanUpscalersBeforeShutdown();
++    FGHooks::TraceBeamNGShutdownEvent("vulkan-upscaler-precleanup-completed");
++    FGHooks::TraceBeamNGShutdownEvent("vulkan-preexit-cleanup-completed");
++}
++
+ // Created with the device as the output's queues have to be added to it
+ static IFGFeature_Vk* CreateFGFeature()
+ {
+     auto& state = State::Instance();
+ 
+     const bool supportedInput = state.activeFgInput == FGInput::DLSSG || state.activeFgInput == FGInput::Upscaler;
+ 
+     if (!IsSupportedBeamNGVulkanFrameGenerationOutput(state.activeFgOutput))
+@@ -809,30 +831,17 @@ static VkResult hkvkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* pPres
+ 
+     if (!dxgiBacked)
+     {
+         if (IsSupportedBeamNGVulkanFrameGenerationOutput(State::Instance().activeFgOutput))
+             FGHooks::PollBeamNGFrameGenerationSettings();
+         else
+             DisableUnsupportedBeamNGVulkanFrameGeneration();
+ 
+-        if (fg != nullptr && FGHooks::BeamNGShutdownRequested())
+-        {
+-            FGHooks::TraceBeamNGShutdownEvent("vulkan-preexit-cleanup-started");
+-            fg->PrepareForShutdown();
+-
+-            // Preparing FSR FG can clear State::currentFeature. Release every
+-            // tracked Vulkan upscaler context while BeamNG's command pools are
+-            // still valid instead of relying on that transient pointer.
+-            FGHooks::TraceBeamNGShutdownEvent("vulkan-upscaler-precleanup-started");
+-            ReleaseBeamNGVulkanUpscalersBeforeShutdown();
+-            FGHooks::TraceBeamNGShutdownEvent("vulkan-upscaler-precleanup-completed");
+-
+-            FGHooks::TraceBeamNGShutdownEvent("vulkan-preexit-cleanup-completed");
+-        }
++        PrepareBeamNGVulkanShutdownIfRequested("vulkan-preexit-cleanup-trigger-present");
+ 
+         State::Instance().swapchainApi = Vulkan;
+ 
+         // Tick feature to let it know if it's frozen
+         if (auto currentFeature = State::Instance().currentFeature; currentFeature != nullptr)
+         {
+             if (auto currentFg = State::Instance().CurrentFG(); currentFg != nullptr)
+                 currentFeature->TickFrozenCheck(currentFg->GetInterpolatedFrameCount());
+@@ -1014,16 +1023,18 @@ VALIDATE_HOOK(hkvkDestroySwapchainKHR, PFN_vkDestroySwapchainKHR)
+ static void hkvkDestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapchain, const VkAllocationCallbacks* pAllocator)
+ {
+     if (FromFGOutput(_ReturnAddress()))
+     {
+         o_DestroySwapchainKHR(device, swapchain, pAllocator);
+         return;
+     }
+ 
++    PrepareBeamNGVulkanShutdownIfRequested("vulkan-preexit-cleanup-trigger-destroy-swapchain");
++
+     if (swapchain != VK_NULL_HANDLE)
+         VulkanHooks::ForgetLowLatencySwapchain(swapchain);
+ 
+     if (auto fg = State::Instance().currentVkFG; fg != nullptr)
+     {
+         ScopedFGCall fgCall {};
+ 
+         if (fg->DestroySwapchain(device, swapchain, pAllocator))

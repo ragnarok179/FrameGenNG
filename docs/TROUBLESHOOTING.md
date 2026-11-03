@@ -6,21 +6,22 @@ Close the game with Alt+F4, open the manager, and select **Reinstall after game 
 
 ## Incorrect, washed-out, or oversaturated colors
 
-FrameGenNG selects the presentation path automatically. SDR is preserved unless Windows HDR is active and BeamNG requests HDR at the same time. Do not manually change `ForceHDR`, `UseHDR10`, or `SkipColorSpace` in `Bin64\FrameGenNG.ini`.
+FrameGenNG selects the presentation path automatically. DirectX 12 uses the HDR10 bridge only when Windows HDR and BeamNG HDR are both active; Vulkan always keeps BeamNG's native SDR/scRGB path. Do not manually change `ForceHDR`, `UseHDR10`, or `SkipColorSpace` in `Bin64\FrameGenNG.ini`.
 
 Fully close and restart BeamNG after changing Windows HDR. If the image remains incorrect, select **Reinstall after game update** in the manager to restore the production configuration and rebuild BeamNG's disposable rendering shader cache. Export a diagnostic bundle if the problem continues.
 
 ## Frame Generation does not activate
 
 1. Confirm that BeamNG is using DirectX 12.
-2. Enable DLSS in the graphics settings.
-3. Enable **Frame Generation** below DLSS.
-4. Confirm that Hardware-accelerated GPU scheduling is enabled in Windows and restart Windows after changing it.
-5. Update the NVIDIA driver.
-6. Temporarily disable other graphics injectors to rule out a proxy conflict.
-7. Run **Diagnostics** in the manager.
+2. Select DLSS, FSR 3, FSR 4, or XeSS in the graphics settings.
+3. Restart BeamNG after changing the upscaler.
+4. Enable **Frame Generation** below the upscaling settings.
+5. Confirm that Hardware-accelerated GPU scheduling is enabled in Windows and restart Windows after changing it.
+6. Update the NVIDIA driver.
+7. Temporarily disable other graphics injectors to rule out a proxy conflict.
+8. Run **Diagnostics** in the manager.
 
-If FrameGenNG reports that DLSS Frame Generation is unavailable, it leaves the selected replacement unchanged and lets BeamNG continue without Frame Generation. It does not install or select an unbundled fallback.
+The controls are intentionally unavailable with **FSR 3 (Custom)**. If the selected generation engine cannot initialize, FrameGenNG disables Frame Generation and lets BeamNG continue instead of selecting an unbundled fallback.
 
 ## Exit error
 
@@ -28,7 +29,7 @@ Collect `temp\frame_generation_shutdown.log` and `beamng.log` from the BeamNG us
 
 ## Emergency restoration
 
-Close BeamNG, then run `Uninstall FrameGenNG.cmd`. Restoration uses the state and backups stored in the BeamNG user folder. A redundant state copy is used automatically if the primary state is missing or damaged. Files changed after installation are copied to a `recovery-before-uninstall-*` folder before restoration.
+Close BeamNG, then run `Uninstall FrameGenNG.cmd`. Restoration uses the state and backups stored in the BeamNG user folder. A redundant state copy is used automatically if the primary state is missing or damaged. Files changed after installation are copied to a `recovery-before-uninstall-*` folder before restoration. An unknown file that replaced a FrameGenNG target inside the game folder is preserved instead of being deleted or overwritten.
 
 ## BeamNG was updated
 

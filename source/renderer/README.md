@@ -7,15 +7,29 @@ b19cfd29134ab9bc75d654b90f55fb05faca91b2
 https://github.com/optiscaler/OptiScaler
 ```
 
-The `framegenng-renderer.patch` file contains the FrameGenNG changes applied to that commit after the upstream project has been locally rebranded as `FrameGenNGEngine`:
+The renderer changes are split into focused patches applied after the upstream project has been locally rebranded as `FrameGenNGEngine`:
+
+- `framegenng-renderer.patch` contains the BeamNG and DirectX integration;
+- `xess-responsive-mask.patch` contains the XeSS input-mask compatibility change;
+- `vulkan-frame-generation.patch` contains the experimental Vulkan FidelityFX Frame Generation path;
+- `vulkan-output-guard.patch` prevents unsupported DLSS-G and XeSS-FG initialization under Vulkan;
+- `vulkan-unsupported-passthrough.patch` clears the unsupported Frame Generation backend and leaves Vulkan presentation untouched when the selected upscaler has no supported Vulkan Frame Generation path.
+- `vulkan-shutdown-boundary.patch` releases FidelityFX and Vulkan upscaler contexts at the first safe shutdown boundary, even when BeamNG stops presenting before destroying its swapchain.
+
+Together, these patches provide:
 
 - reading FrameGenNG settings from the configured BeamNG user folder or its Local AppData default;
-- dynamic enable and multiplier selection;
+- automatic DLSS-G, FidelityFX Frame Generation, or XeSS-FG selection from BeamNG's saved upscaler;
+- dynamic enable and backend-aware multiplier selection;
 - presentation-path adaptation for the Frame Generation swapchain;
 - Steam Overlay and Steam Input passthrough while other known overlays remain blocked;
-- automatic SDR/HDR presentation switching based on Windows HDR and BeamNG's requested output;
+- automatic SDR/HDR presentation switching on DirectX based on Windows HDR and BeamNG's requested output;
 - BeamNG shutdown signaling and targeted avoidance of unsafe late NGX calls;
 - swapchain lifetime fixes identified during prototype testing.
+
+The Vulkan patch deliberately uses the monolithic FidelityFX SDK 1.1.4 provider. Its swapchain lifecycle has been validated with BeamNG, while the newer split Vulkan loader uses a different lifecycle and caused a driver crash during BeamNG's startup resize. Vulkan support is therefore limited to the tested FidelityFX Frame Generation path. When DLSS, XeSS, or another unsupported mode is selected, FrameGenNG clears its Frame Generation backend, does not install Vulkan presentation hooks, and leaves BeamNG's native SDR/HDR path untouched.
+
+The DirectX FidelityFX loader/frame-generation runtime, the monolithic Vulkan FidelityFX runtime, and the Intel XeSS-FG/XeLL runtime distributed in `payload/Bin64/FrameGenNG` come from the dependency set produced by this same pinned OptiScaler source. BeamNG's own upscaler DLLs remain untouched.
 
 ## Rebuilding
 
@@ -34,6 +48,10 @@ git clone --recursive https://github.com/optiscaler/OptiScaler.git FrameGenNGEng
 git -C FrameGenNGEngine-source checkout b19cfd29134ab9bc75d654b90f55fb05faca91b2
 # Apply the FrameGenNGEngine naming normalization, then:
 git -C FrameGenNGEngine-source apply ..\framegenng-renderer.patch
+git -C FrameGenNGEngine-source apply ..\xess-responsive-mask.patch
+git -C FrameGenNGEngine-source apply ..\vulkan-frame-generation.patch
+git -C FrameGenNGEngine-source apply ..\vulkan-output-guard.patch
+git -C FrameGenNGEngine-source apply ..\vulkan-unsupported-passthrough.patch
 ```
 
 Then build the x64 Release solution with Visual Studio and the dependencies documented by OptiScaler. The patch is distributed under the same GPLv3 terms as the modified work.

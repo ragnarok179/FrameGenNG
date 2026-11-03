@@ -1,0 +1,526 @@
+diff --git a/FrameGenNGEngine/DllNames.h b/FrameGenNGEngine/DllNames.h
+index da9bfb3..054a676 100644
+--- a/FrameGenNGEngine/DllNames.h
++++ b/FrameGenNGEngine/DllNames.h
+@@ -146,7 +146,7 @@ DEFINE_NAME_VECTORS(ffxDx12Upscaler, "amd_fidelityfx_upscaler_dx12");
+ DEFINE_NAME_VECTORS(ffxDx12FG, "amd_fidelityfx_framegeneration_dx12");
+ DEFINE_NAME_VECTORS(ffxDx12Denoiser, "amd_fidelityfx_denoiser_dx12");
+ DEFINE_NAME_VECTORS(ffxDx12Radiance, "amd_fidelityfx_radiancecache_dx12");
+-DEFINE_NAME_VECTORS(ffxVk, "amd_fidelityfx_upscaler_vk", "amd_fidelityfx_vk");
++DEFINE_NAME_VECTORS(ffxVk, "amd_fidelityfx_vk");
+ DEFINE_NAME_VECTORS(uell, "main");
+ 
+ inline static bool CompareFileName(std::string* first, std::string* second)
+diff --git a/FrameGenNGEngine/framegen/IFGFeature_Vk.h b/FrameGenNGEngine/framegen/IFGFeature_Vk.h
+index 3242fd2..c17daa3 100644
+--- a/FrameGenNGEngine/framegen/IFGFeature_Vk.h
++++ b/FrameGenNGEngine/framegen/IFGFeature_Vk.h
+@@ -143,6 +143,10 @@ class IFGFeature_Vk : public virtual IFGFeature
+ 
+     virtual void EvaluateState(FG_Constants& fgConstants) = 0;
+ 
++    // Gives Vulkan outputs a chance to stop background interpolation while the
++    // device is still valid, before BeamNG starts destroying Vulkan resources.
++    virtual void PrepareForShutdown() {}
++
+     bool SetResource(VkFGResource* inputResource);
+ 
+     // Removes the current frame's UI copy from its hudless copy, for games blending a UI texture on the frame
+diff --git a/FrameGenNGEngine/framegen/ffx/FSRFG_Vk.cpp b/FrameGenNGEngine/framegen/ffx/FSRFG_Vk.cpp
+index 15d9779..2611ff1 100644
+--- a/FrameGenNGEngine/framegen/ffx/FSRFG_Vk.cpp
++++ b/FrameGenNGEngine/framegen/ffx/FSRFG_Vk.cpp
+@@ -193,13 +193,6 @@ bool FSRFG_Vk::CreateSwapchain(VkDevice device, const VkSwapchainCreateInfoKHR*
+         return false;
+     }
+ 
+-    // Only one swapchain can exist for a window
+-    if (_swapchain != VK_NULL_HANDLE)
+-    {
+-        _retiredSwapchain = _swapchain;
+-        ReleaseSwapchainContext();
+-    }
+-
+     LOG_INFO("Format: {}, color space: {}, extent: {}x{}, images: {}, usage: {:X}, flags: {:X}, present mode: {}",
+              (UINT) pCreateInfo->imageFormat, (UINT) pCreateInfo->imageColorSpace, pCreateInfo->imageExtent.width,
+              pCreateInfo->imageExtent.height, pCreateInfo->minImageCount, (UINT) pCreateInfo->imageUsage,
+@@ -230,6 +223,14 @@ bool FSRFG_Vk::CreateSwapchain(VkDevice device, const VkSwapchainCreateInfoKHR*
+         createInfo.pNext = copyHeader;
+     }
+ 
++    // Only one swapchain can exist for a window. Recreate the known-good legacy
++    // context instead of invoking the split SDK's in-place swapchain path.
++    if (_swapchain != VK_NULL_HANDLE)
++    {
++        _retiredSwapchain = _swapchain;
++        ReleaseSwapchainContext();
++    }
++
+     auto queueInfo = [&](const ExtraQueue& queue)
+     {
+         // FFX validates the family of an unused queue too
+@@ -294,7 +295,18 @@ bool FSRFG_Vk::CreateSwapchain(VkDevice device, const VkSwapchainCreateInfoKHR*
+ 
+     _functions = {};
+     _functions.header.type = FFX_API_QUERY_DESC_TYPE_FGSWAPCHAIN_FUNCTIONS_VK;
+-    _ffxSwapchain->Query(&_swapChainContext, &_functions.header);
++    const auto queryResult = _ffxSwapchain->Query(&_swapChainContext, &_functions.header);
++    const bool requiredFunctionsAvailable = _functions.pOutGetSwapchainImagesKHR != nullptr &&
++                                            _functions.pOutAcquireNextImageKHR != nullptr &&
++                                            _functions.pOutQueuePresentKHR != nullptr;
++
++    if (queryResult != FFX_API_RETURN_OK || !requiredFunctionsAvailable)
++    {
++        LOG_ERROR("FG swapchain function query failed: result={}, required functions available={}",
++                  FfxApiProxy::ReturnCodeToString(queryResult), requiredFunctionsAvailable);
++        ReleaseSwapchainContext();
++        return false;
++    }
+ 
+     _surface = pCreateInfo->surface;
+     _swapchainFormat = pCreateInfo->imageFormat;
+@@ -399,6 +411,24 @@ bool FSRFG_Vk::Shutdown()
+     return true;
+ }
+ 
++void FSRFG_Vk::PrepareForShutdown()
++{
++    if (_shutdownPrepared)
++        return;
++
++    _shutdownPrepared = true;
++    LOG_INFO("BeamNG pre-exit signal received; releasing Vulkan FSR contexts before device teardown");
++
++    // DestroyContext owns and destroys the replacement swapchain. Keep its
++    // handle as retired so BeamNG's later vkDestroySwapchainKHR call is
++    // consumed instead of being forwarded to Vulkan a second time.
++    if (_swapchain != VK_NULL_HANDLE)
++        _retiredSwapchain = _swapchain;
++
++    ReleaseSwapchainContext();
++    LOG_INFO("Vulkan FSR Frame Generation and swapchain contexts released before device teardown");
++}
++
+ void FSRFG_Vk::CreateContext()
+ {
+     auto& state = State::Instance();
+@@ -617,7 +647,6 @@ ffxReturnCode_t FSRFG_Vk::ConfigureEnabled(bool enabled)
+     fgConfig.header.type = FFX_API_CONFIGURE_DESC_TYPE_FRAMEGENERATION;
+     fgConfig.frameGenerationEnabled = enabled;
+     fgConfig.swapChain = _swapchain;
+-
+     auto result = _ffx->Configure(&_fgContext, &fgConfig.header);
+     LOG_INFO("Enabled: {}, result: {}", enabled, FfxApiProxy::ReturnCodeToString(result));
+ 
+@@ -767,7 +796,6 @@ bool FSRFG_Vk::Dispatch()
+         config->FGAsync.value_or_default() && _extraQueues[AsyncComputeQueue].queue != VK_NULL_HANDLE;
+     fgConfig.onlyPresentGenerated = state.fgOnlyGenerated;
+     fgConfig.frameID = willDispatchFrame;
+-
+     if (config->FGDebugView.value_or_default())
+         fgConfig.flags |= FFX_FRAMEGENERATION_FLAG_DRAW_DEBUG_VIEW;
+ 
+diff --git a/FrameGenNGEngine/framegen/ffx/FSRFG_Vk.h b/FrameGenNGEngine/framegen/ffx/FSRFG_Vk.h
+index 258c662..d25007c 100644
+--- a/FrameGenNGEngine/framegen/ffx/FSRFG_Vk.h
++++ b/FrameGenNGEngine/framegen/ffx/FSRFG_Vk.h
+@@ -5,7 +5,7 @@
+ #include <shaders/hud_copy/HudCopy_Vk.h>
+ #include <shaders/hudless_compare_compute/HCC_Vk.h>
+ 
+-// FSR 3.1 FG from the FFX SDK 1.1.4, the last one with Vulkan support,
++// FSR 3.1 FG from the FidelityFX SDK 1.1.4 monolithic Vulkan provider,
+ // or ML FG (FSR 4) with its swapchain from the AMD Vulkan driver
+ class FSRFG_Vk : public virtual IFGFeature_Vk
+ {
+@@ -31,7 +31,6 @@ class FSRFG_Vk : public virtual IFGFeature_Vk
+ 
+     // Surface of the FG swapchain, swapchains of the game's other windows are left alone
+     VkSurfaceKHR _surface = VK_NULL_HANDLE;
+-
+     // Game destroys its old swapchain after creating the new one, the context took it with it already
+     VkSwapchainKHR _retiredSwapchain = VK_NULL_HANDLE;
+ 
+@@ -52,6 +51,7 @@ class FSRFG_Vk : public virtual IFGFeature_Vk
+     std::unordered_map<VkImage, VkImageView> _presentViews;
+ 
+     uint64_t _lastDispatchedFrameId = 0;
++    bool _shutdownPrepared = false;
+ 
+     void CreateContext();
+     void QueryVersions();
+@@ -65,7 +65,6 @@ class FSRFG_Vk : public virtual IFGFeature_Vk
+     ffxReturnCode_t DispatchCallback(ffxDispatchDescFrameGeneration* params);
+     void DispatchHudShaders(ffxDispatchDescFrameGeneration* params);
+     VkImageView PresentView(VkImage image);
+-
+   public:
+     // IFGFeature
+     const char* Name() override final { return "FSR-FG"; }
+@@ -92,6 +91,7 @@ class FSRFG_Vk : public virtual IFGFeature_Vk
+     void SetHdrMetadata(VkDevice device, VkSwapchainKHR swapchain, const VkHdrMetadataEXT* pMetadata) override final;
+ 
+     void EvaluateState(FG_Constants& fgConstants) override final;
++    void PrepareForShutdown() override final;
+ 
+     FSRFG_Vk();
+     ~FSRFG_Vk();
+diff --git a/FrameGenNGEngine/hooks/FG_Hooks.cpp b/FrameGenNGEngine/hooks/FG_Hooks.cpp
+index 0d37696..2330811 100644
+--- a/FrameGenNGEngine/hooks/FG_Hooks.cpp
++++ b/FrameGenNGEngine/hooks/FG_Hooks.cpp
+@@ -52,16 +52,18 @@ constexpr char BeamNGFGEnabledKey[] = "BeamNGFrameGenerationEnabled";
+ constexpr char BeamNGFGMultiplierKey[] = "BeamNGFrameGenerationMultiplier";
+ constexpr char BeamNGUpscalerKey[] = "GraphicAntialiasType";
+ constexpr wchar_t BeamNGShutdownSignalName[] = L"frame_generation_shutdown.signal";
++constexpr wchar_t BeamNGRuntimeSettingsName[] = L"frame_generation_runtime.state";
+ std::atomic_bool beamNGShutdownRequested = false;
+ std::once_flag beamNGShutdownWatcherOnce;
+ std::mutex beamNGShutdownTraceMutex;
+ std::string beamNGStartupUpscaler;
+-
+ struct BeamNGFrameGenerationSettings
+ {
+     bool enabled = false;
+     int multiplier = 2;
+     std::string upscaler;
++    std::optional<bool> runtimeEnabled;
++    std::optional<int> runtimeMultiplier;
+ };
+ 
+ struct BeamNGFrameGenerationProfile
+@@ -159,6 +161,22 @@ std::filesystem::path BeamNGSettingsPath()
+     return path;
+ }
+ 
++std::filesystem::path BeamNGTempPath()
++{
++    const auto settingsPath = BeamNGSettingsPath();
++    return settingsPath.empty() ? std::filesystem::path {} : settingsPath.parent_path().parent_path() / "temp";
++}
++
++std::filesystem::path BeamNGRuntimeSettingsPath()
++{
++    return BeamNGTempPath() / BeamNGRuntimeSettingsName;
++}
++
++std::filesystem::path BeamNGShutdownSignalPath()
++{
++    return BeamNGTempPath() / BeamNGShutdownSignalName;
++}
++
+ std::optional<BeamNGFrameGenerationSettings> ReadBeamNGFrameGenerationSettings()
+ {
+     const auto path = BeamNGSettingsPath();
+@@ -169,20 +187,53 @@ std::optional<BeamNGFrameGenerationSettings> ReadBeamNGFrameGenerationSettings()
+     if (!settingsFile)
+         return std::nullopt;
+ 
+-    const auto settings = nlohmann::json::parse(settingsFile, nullptr, false);
+-    if (settings.is_discarded() || !settings.is_object())
++    const auto settingsJson = nlohmann::json::parse(settingsFile, nullptr, false);
++    if (settingsJson.is_discarded() || !settingsJson.is_object())
+         return std::nullopt;
+ 
+-    const auto enabledIt = settings.find(BeamNGFGEnabledKey);
+-    const auto multiplierIt = settings.find(BeamNGFGMultiplierKey);
+-    const auto upscalerIt = settings.find(BeamNGUpscalerKey);
+-    if (enabledIt == settings.end() || !enabledIt->is_boolean() || multiplierIt == settings.end() ||
+-        !multiplierIt->is_number_integer() || upscalerIt == settings.end() || !upscalerIt->is_string())
++    const auto enabledIt = settingsJson.find(BeamNGFGEnabledKey);
++    const auto multiplierIt = settingsJson.find(BeamNGFGMultiplierKey);
++    const auto upscalerIt = settingsJson.find(BeamNGUpscalerKey);
++    if (enabledIt == settingsJson.end() || !enabledIt->is_boolean() || multiplierIt == settingsJson.end() ||
++        !multiplierIt->is_number_integer() || upscalerIt == settingsJson.end() || !upscalerIt->is_string())
+         return std::nullopt;
+ 
+-    return BeamNGFrameGenerationSettings {
+-        enabledIt->get<bool>(), std::clamp(multiplierIt->get<int>(), 2, 4), upscalerIt->get<std::string>()
+-    };
++    bool enabled = enabledIt->get<bool>();
++    int multiplier = std::clamp(multiplierIt->get<int>(), 2, 4);
++    BeamNGFrameGenerationSettings settings {};
++
++    const auto runtimePath = BeamNGRuntimeSettingsPath();
++    std::ifstream runtimeFile(runtimePath);
++    if (runtimeFile)
++    {
++        std::string line;
++        while (std::getline(runtimeFile, line))
++        {
++            if (line == "enabled=true")
++                settings.runtimeEnabled = true;
++            else if (line == "enabled=false")
++                settings.runtimeEnabled = false;
++            else if (line.rfind("multiplier=", 0) == 0)
++            {
++                try
++                {
++                    settings.runtimeMultiplier = std::clamp(std::stoi(line.substr(11)), 2, 4);
++                }
++                catch (const std::exception&)
++                {
++                    LOG_WARN("Ignoring invalid BeamNG runtime multiplier in {}", runtimePath.string());
++                }
++            }
++        }
++
++        enabled = settings.runtimeEnabled.value_or(enabled);
++        multiplier = settings.runtimeMultiplier.value_or(multiplier);
++    }
++
++    settings.enabled = enabled;
++    settings.multiplier = multiplier;
++    settings.upscaler = upscalerIt->get<std::string>();
++    return settings;
+ }
+ 
+ BeamNGFrameGenerationProfile GetBeamNGFrameGenerationProfile(const std::string& upscaler)
+@@ -227,6 +278,21 @@ void TraceBeamNGShutdown(const char* message, bool truncate = false)
+         trace << GetTickCount64() << '|' << message << '\n';
+ }
+ 
++bool ObserveBeamNGShutdownSignal()
++{
++    if (beamNGShutdownRequested.load(std::memory_order_acquire))
++        return true;
++
++    std::error_code existsError;
++    if (!std::filesystem::exists(BeamNGShutdownSignalPath(), existsError))
++        return false;
++
++    if (!beamNGShutdownRequested.exchange(true, std::memory_order_acq_rel))
++        TraceBeamNGShutdown("beamng-preexit-signal-observed");
++
++    return true;
++}
++
+ void StartBeamNGShutdownWatcher()
+ {
+     std::call_once(beamNGShutdownWatcherOnce, [] {
+@@ -234,23 +300,17 @@ void StartBeamNGShutdownWatcher()
+         if (settingsPath.empty())
+             return;
+ 
+-        const auto signalPath = settingsPath.parent_path().parent_path() / "temp" / BeamNGShutdownSignalName;
+         std::error_code removeError;
+-        std::filesystem::remove(signalPath, removeError);
++        std::filesystem::remove(BeamNGShutdownSignalPath(), removeError);
+         TraceBeamNGShutdown("watcher-started", true);
+-        std::thread([signalPath] {
++        std::thread([] {
+             // BeamNG's beamng.log is buffered and exposes its shutdown line too
+             // late. A GELua onPreExit extension creates this dedicated file while
+             // the D3D12 device and NGX objects are still alive.
+             while (!beamNGShutdownRequested.load(std::memory_order_relaxed))
+             {
+-                std::error_code existsError;
+-                if (std::filesystem::exists(signalPath, existsError))
+-                {
+-                    beamNGShutdownRequested.store(true, std::memory_order_release);
+-                    TraceBeamNGShutdown("beamng-preexit-signal-observed");
++                if (ObserveBeamNGShutdownSignal())
+                     return;
+-                }
+ 
+                 std::this_thread::sleep_for(BeamNGShutdownSignalPollInterval);
+             }
+@@ -258,17 +318,19 @@ void StartBeamNGShutdownWatcher()
+     });
+ }
+ 
+-void PollBeamNGFrameGenerationSettings(bool force = false)
++void PollBeamNGFrameGenerationSettingsInternal(bool force = false)
+ {
+     StartBeamNGShutdownWatcher();
+ 
+-    static auto lastPoll = std::chrono::steady_clock::time_point::min();
++    static auto lastPoll = std::chrono::steady_clock::time_point {};
++    static bool hasPolled = false;
+     static bool pathLogged = false;
+ 
+     const auto now = std::chrono::steady_clock::now();
+-    if (!force && now - lastPoll < BeamNGSettingsPollInterval)
++    if (!force && hasPolled && now - lastPoll < BeamNGSettingsPollInterval)
+         return;
+     lastPoll = now;
++    hasPolled = true;
+ 
+     const auto settings = ReadBeamNGFrameGenerationSettings();
+     if (!settings.has_value())
+@@ -281,7 +343,6 @@ void PollBeamNGFrameGenerationSettings(bool force = false)
+     const int previousDlssCount = config->FGDLSSGInterpolationCount.value_or_default();
+     const int previousXeCount = config->FGXeFGInterpolationCount.value_or_default();
+     const int multiplier = ApplyBeamNGInterpolationCount(config, activeOutput, settings->multiplier);
+-
+     const bool enabledChanged = config->IsFGEnabled() != enabled;
+     const bool multiplierChanged = previousDlssCount != config->FGDLSSGInterpolationCount.value_or_default() ||
+                                    previousXeCount != config->FGXeFGInterpolationCount.value_or_default();
+@@ -333,9 +394,14 @@ void FGHooks::ConfigureBeamNGFrameGeneration()
+              magic_enum::enum_name(profile.output), multiplier);
+ }
+ 
++void FGHooks::PollBeamNGFrameGenerationSettings()
++{
++    PollBeamNGFrameGenerationSettingsInternal();
++}
++
+ bool FGHooks::BeamNGShutdownRequested()
+ {
+-    return beamNGShutdownRequested.load(std::memory_order_acquire);
++    return ObserveBeamNGShutdownSignal();
+ }
+ 
+ void FGHooks::TraceBeamNGShutdownEvent(const char* message)
+@@ -432,7 +498,7 @@ static bool RefuseUnderGameFsrFg()
+ 
+ static bool CheckForFGStatus()
+ {
+-    PollBeamNGFrameGenerationSettings(true);
++    PollBeamNGFrameGenerationSettingsInternal(true);
+ 
+     // Need to check overlay menu parameter, goes to places it shouldn't go
+     // if (!Config::Instance()->OverlayMenu.value_or_default())
+@@ -1599,7 +1665,7 @@ HRESULT FGHooks::hkFGPresent1(IDXGISwapChain1* This, UINT SyncInterval, UINT Fla
+ HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
+                            const DXGI_PRESENT_PARAMETERS* pPresentParameters)
+ {
+-    PollBeamNGFrameGenerationSettings();
++    PollBeamNGFrameGenerationSettingsInternal();
+ 
+     _lastPresentFlags = Flags;
+ 
+diff --git a/FrameGenNGEngine/hooks/FG_Hooks.h b/FrameGenNGEngine/hooks/FG_Hooks.h
+index d35db8f..58d284d 100644
+--- a/FrameGenNGEngine/hooks/FG_Hooks.h
++++ b/FrameGenNGEngine/hooks/FG_Hooks.h
+@@ -11,6 +11,10 @@ class FGHooks
+     // renderer copies Config into its active state.
+     static void ConfigureBeamNGFrameGeneration();
+ 
++    // Applies live BeamNG FG settings from render APIs that do not pass through
++    // the DXGI present hook (notably native Vulkan).
++    static void PollBeamNGFrameGenerationSettings();
++
+     static HRESULT CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI_SWAP_CHAIN_DESC* pDesc,
+                                    IDXGISwapChain** ppSwapChain);
+ 
+diff --git a/FrameGenNGEngine/hooks/Vulkan_Hooks.cpp b/FrameGenNGEngine/hooks/Vulkan_Hooks.cpp
+index c9dcb80..c070135 100644
+--- a/FrameGenNGEngine/hooks/Vulkan_Hooks.cpp
++++ b/FrameGenNGEngine/hooks/Vulkan_Hooks.cpp
+@@ -1,6 +1,8 @@
+ #include "pch.h"
++#include <nvsdk_ngx_vk.h>
+ 
+ #include "Vulkan_Hooks.h"
++#include "FG_Hooks.h"
+ 
+ #include <Util.h>
+ #include <Config.h>
+@@ -10,6 +12,7 @@
+ #include <menu/menu_common.h>
+ #include <proxies/KernelBase_Proxy.h>
+ #include <upscalers/IFeature_Vk.h>
++#include <inputs/NVNGX_DLSS.h>
+ #include <framegen/ffx/FSRFG_Vk.h>
+ #include <framegen/dlssg/DLSSG_Vk.h>
+ #include <framegen/reprojection/Reprojection_Vk.h>
+@@ -788,6 +791,23 @@ static VkResult hkvkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* pPres
+ 
+     if (!dxgiBacked)
+     {
++        FGHooks::PollBeamNGFrameGenerationSettings();
++
++        if (fg != nullptr && FGHooks::BeamNGShutdownRequested())
++        {
++            FGHooks::TraceBeamNGShutdownEvent("vulkan-preexit-cleanup-started");
++            fg->PrepareForShutdown();
++
++            // Preparing FSR FG can clear State::currentFeature. Release every
++            // tracked Vulkan upscaler context while BeamNG's command pools are
++            // still valid instead of relying on that transient pointer.
++            FGHooks::TraceBeamNGShutdownEvent("vulkan-upscaler-precleanup-started");
++            ReleaseBeamNGVulkanUpscalersBeforeShutdown();
++            FGHooks::TraceBeamNGShutdownEvent("vulkan-upscaler-precleanup-completed");
++
++            FGHooks::TraceBeamNGShutdownEvent("vulkan-preexit-cleanup-completed");
++        }
++
+         State::Instance().swapchainApi = Vulkan;
+ 
+         // Tick feature to let it know if it's frozen
+@@ -957,9 +977,12 @@ static VkResult hkvkCreateSwapchainKHR(VkDevice device, const VkSwapchainCreateI
+         _device = device;
+         LOG_DEBUG("_device captured: {0:X}", (UINT64) _device);
+ 
+-        auto hwnd = VulkanHooks::SurfaceWindow(pCreateInfo->surface);
+-        MenuOverlayVk::CreateSwapchain(device, _PD, _instance, hwnd != nullptr ? hwnd : _hwnd, pCreateInfo, pAllocator,
+-                                       pSwapchain);
++        if (Config::Instance()->OverlayMenu.value_or_default())
++        {
++            auto hwnd = VulkanHooks::SurfaceWindow(pCreateInfo->surface);
++            MenuOverlayVk::CreateSwapchain(device, _PD, _instance, hwnd != nullptr ? hwnd : _hwnd, pCreateInfo,
++                                           pAllocator, pSwapchain);
++        }
+     }
+ 
+     LOG_FUNC_RESULT(result);
+diff --git a/FrameGenNGEngine/inputs/NVNGX_DLSS.h b/FrameGenNGEngine/inputs/NVNGX_DLSS.h
+index 8238108..6fc7ebb 100644
+--- a/FrameGenNGEngine/inputs/NVNGX_DLSS.h
++++ b/FrameGenNGEngine/inputs/NVNGX_DLSS.h
+@@ -7,3 +7,5 @@ template <typename FeatureType> struct ContextData
+     int changeBackendCounter = 0;
+     UINT64 lastEvalFrame = 0;
+ };
++
++void ReleaseBeamNGVulkanUpscalersBeforeShutdown();
+diff --git a/FrameGenNGEngine/inputs/NVNGX_DLSS_Vk.cpp b/FrameGenNGEngine/inputs/NVNGX_DLSS_Vk.cpp
+index 2ac7d00..db9930f 100644
+--- a/FrameGenNGEngine/inputs/NVNGX_DLSS_Vk.cpp
++++ b/FrameGenNGEngine/inputs/NVNGX_DLSS_Vk.cpp
+@@ -28,6 +28,26 @@ static bool shutdown = false;
+ static bool _skipInit = false;
+ static wchar_t const** paths;
+ 
++void ReleaseBeamNGVulkanUpscalersBeforeShutdown()
++{
++    std::vector<unsigned int> handles;
++    handles.reserve(VkContexts.size());
++
++    for (const auto& [handleId, context] : VkContexts)
++    {
++        if (context.feature != nullptr)
++            handles.push_back(handleId);
++    }
++
++    LOG_INFO("BeamNG pre-exit: releasing {} Vulkan upscaler context(s) before device teardown", handles.size());
++    for (const auto handleId : handles)
++    {
++        NVSDK_NGX_Handle handle { handleId };
++        const auto result = NVSDK_NGX_VULKAN_ReleaseFeature(&handle);
++        LOG_INFO("BeamNG pre-exit: Vulkan upscaler {} release result {:X}", handleId, (UINT) result);
++    }
++}
++
+ class ScopedInitVk
+ {
+   private:
+diff --git a/FrameGenNGEngine/proxies/FfxApi_Proxy.h b/FrameGenNGEngine/proxies/FfxApi_Proxy.h
+index cc10ae9..1ba15fb 100644
+--- a/FrameGenNGEngine/proxies/FfxApi_Proxy.h
++++ b/FrameGenNGEngine/proxies/FfxApi_Proxy.h
+@@ -1590,8 +1590,10 @@ class FfxApiProxy
+ 
+         if (main_vk.dll == nullptr)
+         {
+-            // Try new api first
+-            std::vector<std::wstring> dllNames = { L"amd_fidelityfx_upscaler_vk.dll", L"amd_fidelityfx_vk.dll" };
++            // Keep the Vulkan frame-generation path on the monolithic provider. The split
++            // FidelityFX loader owns a different swapchain lifecycle and cannot be mixed with
++            // the legacy integration used by this renderer.
++            std::vector<std::wstring> dllNames = { L"amd_fidelityfx_vk.dll" };
+ 
+             auto optiPath = Config::Instance()->MainDllPath.value();
+ 

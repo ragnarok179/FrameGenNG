@@ -1,5 +1,33 @@
+diff --git a/FrameGenNGEngine/Config.cpp b/FrameGenNGEngine/Config.cpp
+index c578bf4..0a4b677 100644
+--- a/FrameGenNGEngine/Config.cpp
++++ b/FrameGenNGEngine/Config.cpp
+@@ -801,8 +801,8 @@ bool Config::Reload(std::filesystem::path iniPath)
+             FfxVkPath.set_from_config(readWString("Libraries", "FfxVkPath"));
+
+             XeSSLibrary.set_from_config(readWString("Libraries", "XeSSPath"));
+-            XeSSLibrary.set_from_config(readWString("Libraries", "XeFGPath"));
+-            XeSSLibrary.set_from_config(readWString("Libraries", "XeLLPath"));
++            XeFGLibrary.set_from_config(readWString("Libraries", "XeFGPath"));
++            XeLLLibrary.set_from_config(readWString("Libraries", "XeLLPath"));
+             XeSSDx11Library.set_from_config(readWString("Libraries", "XeSSDx11Path"));
+         }
+
+diff --git a/FrameGenNGEngine/DllNames.h b/FrameGenNGEngine/DllNames.h
+index 10afca4..da9bfb3 100644
+--- a/FrameGenNGEngine/DllNames.h
++++ b/FrameGenNGEngine/DllNames.h
+@@ -57,8 +57,6 @@ DEFINE_NAME_VECTORS(overlay, "eosovh-win32-shipping",
+
+ DEFINE_NAME_VECTORS(blockOverlay, "eosovh-win32-shipping",
+                                   "eosovh-win64-shipping",
+-                                  "gameoverlayrenderer",
+-                                  "gameoverlayrenderer64",
+                                   "owclient",
+                                   "galaxy",
+                                   "galaxy64",
 diff --git a/FrameGenNGEngine/FrameGenNGEngine.vcxproj b/FrameGenNGEngine/FrameGenNGEngine.vcxproj
-index d171868..1525936 100644
+index d171868..6caf246 100644
 --- a/FrameGenNGEngine/FrameGenNGEngine.vcxproj
 +++ b/FrameGenNGEngine/FrameGenNGEngine.vcxproj
 @@ -109,12 +109,13 @@
@@ -17,20 +45,13 @@ index d171868..1525936 100644
        <LanguageStandard>stdcpplatest</LanguageStandard>
        <PrecompiledHeader>Use</PrecompiledHeader>
        <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
-@@ -850,4 +851,4 @@ copy NUL "$(SolutionDir)x64\Release\a\!! EXTRACT ALL FILES TO GAME FOLDER !!" /Y
-   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
-   <ImportGroup Label="ExtensionTargets">
-   </ImportGroup>
--</Project>
-\ No newline at end of file
-+</Project>
 diff --git a/FrameGenNGEngine/State.h b/FrameGenNGEngine/State.h
 index 7ff5af6..647ed7f 100644
 --- a/FrameGenNGEngine/State.h
 +++ b/FrameGenNGEngine/State.h
 @@ -9,6 +9,7 @@
  #include <inputs/FG/Streamline_Inputs_Sl1_Dx12.h>
- 
+
  #include <chrono>
 +#include <atomic>
  #include <set>
@@ -42,44 +63,47 @@ index 7ff5af6..647ed7f 100644
      bool hdrOutputActive = false;
 +    std::atomic_bool beamNgHdr10BridgeActive { false };
 +    std::atomic<HWND> beamNgPresentationWindow { nullptr };
- 
+
      std::optional<ApiUpscalerInput> setInputApiName;
      ApiUpscalerInput currentInputApiName;
-diff --git a/FrameGenNGEngine/DllNames.h b/FrameGenNGEngine/DllNames.h
---- a/FrameGenNGEngine/DllNames.h
-+++ b/FrameGenNGEngine/DllNames.h
-@@ -57,10 +57,8 @@ DEFINE_NAME_VECTORS(overlay, "eosovh-win32-shipping",
- 
- DEFINE_NAME_VECTORS(blockOverlay, "eosovh-win32-shipping",
-                                   "eosovh-win64-shipping",
--                                  "gameoverlayrenderer",
--                                  "gameoverlayrenderer64",
-                                   "owclient",
-                                   "galaxy",
-                                   "galaxy64",
-                                   "discordhook",
-                                   "discordhook64",
 diff --git a/FrameGenNGEngine/dllmain.cpp b/FrameGenNGEngine/dllmain.cpp
-index c738e4e..5326077 100644
+index c738e4e..82e69ef 100644
 --- a/FrameGenNGEngine/dllmain.cpp
 +++ b/FrameGenNGEngine/dllmain.cpp
-@@ -1793,12 +1793,6 @@ void Attach()
-         if ((Config::Instance()->FGInput.value_or_default() == FGInput::Upscaler) &&
+@@ -32,6 +32,7 @@
+ #include <hooks/Dxgi_Hooks.h>
+ #include <hooks/D3D11_Hooks.h>
+ #include <hooks/D3D12_Hooks.h>
++#include <hooks/FG_Hooks.h>
+ #include <hooks/Vulkan_Hooks.h>
+ #include <hooks/Ntdll_Hooks.h>
+ #include <hooks/Kernel_Hooks.h>
+@@ -1621,6 +1621,8 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
+         Config::Instance()->CheckForUpdate.set_volatile_value(false);
+ #endif
+
++        FGHooks::ConfigureBeamNGFrameGeneration();
++
+         // Initial state of FG
+         State::Instance().activeFgInput = Config::Instance()->FGInput.value_or_default();
+         State::Instance().activeFgOutput = Config::Instance()->FGOutput.value_or_default();
+@@ -1794,12 +1796,6 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
              !Config::Instance()->DisableOverlays.has_value())
              Config::Instance()->DisableOverlays.set_volatile_value(true);
--
+
 -        if (Config::Instance()->DisableOverlays.value_or_default())
 -        {
 -            _wputenv_s(L"SteamNoOverlayUIDrawing", L"1");
 -            SetEnvironmentVariableW(L"SteamNoOverlayUIDrawing", L"1");
 -        }
- 
+-
          // FSR4 Watermark, overrides environment variable only if set in config
          // The driver only checks whether the variable exists so disabling has to remove it
-@@ -1939,21 +1939,22 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
+         if (Config::Instance()->Fsr4EnableWatermark.has_value())
+@@ -1939,21 +1935,22 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
          // unhookAdvapi32();
          // DetachHooks();
- 
+
 -        if (skModule != nullptr)
 -            NtdllProxy::FreeLibrary_Ldr(skModule);
 +        // When lpReserved is non-null, Windows is terminating the process and will
@@ -89,12 +113,12 @@ index c738e4e..5326077 100644
 +        {
 +            if (skModule != nullptr)
 +                NtdllProxy::FreeLibrary_Ldr(skModule);
- 
+
 -        if (reshadeModule != nullptr)
 -            NtdllProxy::FreeLibrary_Ldr(reshadeModule);
 +            if (reshadeModule != nullptr)
 +                NtdllProxy::FreeLibrary_Ldr(reshadeModule);
- 
+
 -        if (_asiHandles.size() > 0)
 -        {
 -            for (size_t i = 0; i < _asiHandles.size(); i++)
@@ -102,36 +126,36 @@ index c738e4e..5326077 100644
 -        }
 +            for (const auto asiHandle : _asiHandles)
 +                NtdllProxy::FreeLibrary_Ldr(asiHandle);
- 
+
 -        for (const PVOID& v : State::Instance().modulesToFree)
 -        {
 -            NtdllProxy::FreeLibrary_Ldr(v);
 +            for (const PVOID& moduleHandle : State::Instance().modulesToFree)
 +                NtdllProxy::FreeLibrary_Ldr(moduleHandle);
          }
- 
+
          spdlog::info("");
 diff --git a/FrameGenNGEngine/framegen/dlssg/DLSSG_Dx12.cpp b/FrameGenNGEngine/framegen/dlssg/DLSSG_Dx12.cpp
 index 5d419c6..0d0dfbf 100644
 --- a/FrameGenNGEngine/framegen/dlssg/DLSSG_Dx12.cpp
 +++ b/FrameGenNGEngine/framegen/dlssg/DLSSG_Dx12.cpp
 @@ -2,6 +2,8 @@
- 
+
  #include "DLSSG_Dx12.h"
- 
+
 +#include <Config.h>
 +
  #include <hudfix/Hudfix_Dx12.h>
  #include <hudfix/Hudfix_Dx11.h>
- 
+
 @@ -9,9 +11,42 @@
  #include <resource_tracking/ResTrack_dx12.h>
- 
+
  #include <hooks/DxgiFactory_Hooks.h>
 +#include <misc/BeamNGHdrBridge.h>
- 
+
  #include <magic_enum.hpp>
- 
+
 +static void ApplyForcedHdr10ColorSpace(IDXGISwapChain* swapChain)
 +{
 +    if (swapChain == nullptr || !BeamNGHdrBridge::IsActive())
@@ -165,25 +189,25 @@ index 5d419c6..0d0dfbf 100644
 +}
 +
  HWND DLSSG_Dx12::Hwnd() { return _hwnd; }
- 
+
  bool DLSSG_Dx12::CreateSwapchainInternal(IDXGIFactory* factory, ID3D12CommandQueue* cmdQueue,
 @@ -66,6 +101,8 @@ bool DLSSG_Dx12::CreateSwapchainInternal(IDXGIFactory* factory, ID3D12CommandQue
          return false;
      }
- 
+
 +    ApplyForcedHdr10ColorSpace(*swapChain);
 +
      QueryState();
- 
+
      _gameCommandQueue = cmdQueue;
 @@ -134,6 +171,8 @@ bool DLSSG_Dx12::CreateSwapchain1Internal(IDXGIFactory* factory, ID3D12CommandQu
          }
      }
- 
+
 +    ApplyForcedHdr10ColorSpace(*swapChain);
 +
      QueryState();
- 
+
      _gameCommandQueue = cmdQueue;
 diff --git a/FrameGenNGEngine/hooks/D3D12_Hooks.cpp b/FrameGenNGEngine/hooks/D3D12_Hooks.cpp
 index 31fe0f9..af4a557 100644
@@ -194,16 +218,16 @@ index 31fe0f9..af4a557 100644
  #include <proxies/KernelBase_Proxy.h>
  #include <hooks/Reflex_Hooks.h>
 +#include <hooks/FG_Hooks.h>
- 
+
  #include <detours/detours.h>
- 
+
 diff --git a/FrameGenNGEngine/hooks/DxgiFactory_WrappedCalls.cpp b/FrameGenNGEngine/hooks/DxgiFactory_WrappedCalls.cpp
 index 620960d..98cd55e 100644
 --- a/FrameGenNGEngine/hooks/DxgiFactory_WrappedCalls.cpp
 +++ b/FrameGenNGEngine/hooks/DxgiFactory_WrappedCalls.cpp
 @@ -9,6 +9,7 @@
  #include <spoofing/Dxgi_Spoofing.h>
- 
+
  #include <misc/HiddenWindow.h>
 +#include <misc/BeamNGHdrBridge.h>
  #include <with_dx12/with_dx12.h>
@@ -212,7 +236,7 @@ index 620960d..98cd55e 100644
 @@ -29,6 +30,67 @@ static bool ShouldCreateDx11wDx12Swapchain()
             State::Instance().activeFgInput != FGInput::NvngxFG;
  }
- 
+
 +static bool PrepareBeamNGHdrBridge(DXGI_SWAP_CHAIN_DESC& desc, bool windowsHdrActive)
 +{
 +    const bool active =
@@ -280,7 +304,7 @@ index 620960d..98cd55e 100644
 @@ -121,6 +183,18 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChain(IDXGIFactory* realFactory, Wrap
          return res;
      }
- 
+
 +    const bool isInternalOrNonD3D12 = _skipFGSwapChainCreation || !IsD3D12CommandQueue(pDevice);
 +    const auto presentationClaim =
 +        BeamNGHdrBridge::ClaimPresentationWindow(localDesc.OutputWindow, isInternalOrNonD3D12);
@@ -297,7 +321,7 @@ index 620960d..98cd55e 100644
                localDesc.BufferDesc.Width, localDesc.BufferDesc.Height, (UINT) localDesc.BufferDesc.Format,
                localDesc.BufferCount, localDesc.Flags, (SIZE_T) localDesc.OutputWindow, localDesc.Windowed,
 @@ -223,6 +297,7 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChain(IDXGIFactory* realFactory, Wrap
- 
+
              if (FGSCResult == S_OK)
              {
 +                ApplyBeamNGHdrBridgeColorSpace(*ppSwapChain, hdrBridgeActive);
@@ -305,13 +329,13 @@ index 620960d..98cd55e 100644
                  return FGSCResult;
              }
 @@ -369,6 +444,7 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChain(IDXGIFactory* realFactory, Wrap
- 
+
          if (result == S_OK)
          {
 +            ApplyBeamNGHdrBridgeColorSpace(*ppSwapChain, hdrBridgeActive);
              State::Instance().currentSwapchainDesc = localDesc;
              State::Instance().swapchainInteropApi = SwapchainInteropApi::None;
- 
+
 @@ -396,7 +472,8 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChain(IDXGIFactory* realFactory, Wrap
              if ((*ppSwapChain)->QueryInterface(IID_PPV_ARGS(&wrapped)) != S_OK)
              {
@@ -319,13 +343,13 @@ index 620960d..98cd55e 100644
 -                    new WrappedIDXGISwapChain4(realSC, realDevice, localDesc.OutputWindow, localDesc.Flags, false);
 +                    new WrappedIDXGISwapChain4(realSC, realDevice, localDesc.OutputWindow, localDesc.Flags, false,
 +                                               hdrBridgeActive, ownsHdrBridgeState);
- 
+
                  // Set as currentSwapchain is FG is disabled
                  if (!_skipFGSwapChainCreation)
 @@ -418,6 +495,13 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChain(IDXGIFactory* realFactory, Wrap
          LOG_ERROR("CreateSwapChain failed: {:X}", (UINT) result);
      }
- 
+
 +    if (FAILED(result) && ownsHdrBridgeState)
 +    {
 +        BeamNGHdrBridge::Publish(previousHdrBridgeState);
@@ -335,11 +359,11 @@ index 620960d..98cd55e 100644
 +
      return result;
  }
- 
+
 @@ -496,6 +580,17 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChainForHwnd(IDXGIFactory2* realFacto
          return result;
      }
- 
+
 +    const bool isInternalOrNonD3D12 = _skipFGSwapChainCreation || !IsD3D12CommandQueue(pDevice);
 +    const auto presentationClaim = BeamNGHdrBridge::ClaimPresentationWindow(hWnd, isInternalOrNonD3D12);
 +    const bool ownsHdrBridgeState = presentationClaim.ownsState;
@@ -355,7 +379,7 @@ index 620960d..98cd55e 100644
                localDesc.Width, localDesc.Height, (UINT) localDesc.Format, localDesc.BufferCount, localDesc.Flags,
                (size_t) hWnd, _skipFGSwapChainCreation);
 @@ -612,6 +707,7 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChainForHwnd(IDXGIFactory2* realFacto
- 
+
              if (FGSCResult == S_OK)
              {
 +                ApplyBeamNGHdrBridgeColorSpace((IDXGISwapChain*) *ppSwapChain, hdrBridgeActive);
@@ -363,12 +387,12 @@ index 620960d..98cd55e 100644
                  return FGSCResult;
              }
 @@ -769,6 +865,7 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChainForHwnd(IDXGIFactory2* realFacto
- 
+
          if (result == S_OK)
          {
 +            ApplyBeamNGHdrBridgeColorSpace((IDXGISwapChain*) *ppSwapChain, hdrBridgeActive);
              State::Instance().swapchainInteropApi = SwapchainInteropApi::None;
- 
+
              // check for SL proxy
 @@ -795,7 +892,9 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChainForHwnd(IDXGIFactory2* realFacto
              WrappedIDXGISwapChain4* wrapped;
@@ -378,13 +402,13 @@ index 620960d..98cd55e 100644
 +                *ppSwapChain =
 +                    new WrappedIDXGISwapChain4(realSC, readDevice, hWnd, localDesc.Flags, false, hdrBridgeActive,
 +                                               ownsHdrBridgeState);
- 
+
                  LOG_DEBUG("Created new WrappedIDXGISwapChain4: {0:X}, pDevice: {1:X}", (uintptr_t) *ppSwapChain,
                            (uintptr_t) pDevice);
 @@ -823,6 +922,13 @@ HRESULT DxgiFactoryWrappedCalls::CreateSwapChainForHwnd(IDXGIFactory2* realFacto
          firstCall = false;
      }
- 
+
 +    if (FAILED(result) && ownsHdrBridgeState)
 +    {
 +        BeamNGHdrBridge::Publish(previousHdrBridgeState);
@@ -394,9 +418,9 @@ index 620960d..98cd55e 100644
 +
      return result;
  }
- 
+
 diff --git a/FrameGenNGEngine/hooks/FG_Hooks.cpp b/FrameGenNGEngine/hooks/FG_Hooks.cpp
-index 821cafa..02b6468 100644
+index 821cafa..0d37696 100644
 --- a/FrameGenNGEngine/hooks/FG_Hooks.cpp
 +++ b/FrameGenNGEngine/hooks/FG_Hooks.cpp
 @@ -1,5 +1,6 @@
@@ -404,10 +428,10 @@ index 821cafa..02b6468 100644
  #include "FG_Hooks.h"
 +#include <misc/BeamNGHdrBridge.h>
  #include <Config.h>
- 
+
  #include <framegen/ffx/FSRFG_Dx12.h>
-@@ -24,6 +25,13 @@
- 
+@@ -24,6 +25,14 @@
+
  #include <d3d12.h>
  #include <detours/detours.h>
 +#include <json.hpp>
@@ -416,24 +440,43 @@ index 821cafa..02b6468 100644
 +#include <cstdlib>
 +#include <filesystem>
 +#include <fstream>
++#include <optional>
 +#include <string>
- 
+
  #define XEFG_RESOURCE_REF_LIMIT 1
- 
-@@ -35,6 +43,210 @@ static ID3D12CommandQueue* currentCommandQueue = nullptr;
+
+@@ -35,6 +44,305 @@ static ID3D12CommandQueue* currentCommandQueue = nullptr;
  static bool _forcedHdrForXeFG = false;
  static HANDLE _semaphore = nullptr;
- 
+
 +namespace
 +{
 +constexpr auto BeamNGSettingsPollInterval = std::chrono::milliseconds(500);
 +constexpr auto BeamNGShutdownSignalPollInterval = std::chrono::milliseconds(10);
 +constexpr char BeamNGFGEnabledKey[] = "BeamNGFrameGenerationEnabled";
 +constexpr char BeamNGFGMultiplierKey[] = "BeamNGFrameGenerationMultiplier";
++constexpr char BeamNGUpscalerKey[] = "GraphicAntialiasType";
 +constexpr wchar_t BeamNGShutdownSignalName[] = L"frame_generation_shutdown.signal";
 +std::atomic_bool beamNGShutdownRequested = false;
 +std::once_flag beamNGShutdownWatcherOnce;
 +std::mutex beamNGShutdownTraceMutex;
++std::string beamNGStartupUpscaler;
++
++struct BeamNGFrameGenerationSettings
++{
++    bool enabled = false;
++    int multiplier = 2;
++    std::string upscaler;
++};
++
++struct BeamNGFrameGenerationProfile
++{
++    FGInput input = FGInput::NoFG;
++    FGOutput output = FGOutput::NoFG;
++    int maximumMultiplier = 2;
++
++    bool IsSupported() const { return input != FGInput::NoFG && output != FGOutput::NoFG; }
++};
 +
 +struct BeamNGHdrFormatTransition
 +{
@@ -521,6 +564,61 @@ index 821cafa..02b6468 100644
 +    return path;
 +}
 +
++std::optional<BeamNGFrameGenerationSettings> ReadBeamNGFrameGenerationSettings()
++{
++    const auto path = BeamNGSettingsPath();
++    if (path.empty())
++        return std::nullopt;
++
++    std::ifstream settingsFile(path);
++    if (!settingsFile)
++        return std::nullopt;
++
++    const auto settings = nlohmann::json::parse(settingsFile, nullptr, false);
++    if (settings.is_discarded() || !settings.is_object())
++        return std::nullopt;
++
++    const auto enabledIt = settings.find(BeamNGFGEnabledKey);
++    const auto multiplierIt = settings.find(BeamNGFGMultiplierKey);
++    const auto upscalerIt = settings.find(BeamNGUpscalerKey);
++    if (enabledIt == settings.end() || !enabledIt->is_boolean() || multiplierIt == settings.end() ||
++        !multiplierIt->is_number_integer() || upscalerIt == settings.end() || !upscalerIt->is_string())
++        return std::nullopt;
++
++    return BeamNGFrameGenerationSettings {
++        enabledIt->get<bool>(), std::clamp(multiplierIt->get<int>(), 2, 4), upscalerIt->get<std::string>()
++    };
++}
++
++BeamNGFrameGenerationProfile GetBeamNGFrameGenerationProfile(const std::string& upscaler)
++{
++    if (upscaler == "dlss")
++        return { FGInput::Upscaler, FGOutput::DLSSG, 4 };
++
++    if (upscaler == "fsr3" || upscaler == "fsr4")
++        return { FGInput::Upscaler, FGOutput::FSRFG, 2 };
++
++    if (upscaler == "xess")
++        return { FGInput::Upscaler, FGOutput::XeFG, 2 };
++
++    // BeamNG's fsrCustom mode is an internal temporal upscaler. It does not
++    // expose the vendor API resources consumed by the available FG engines.
++    return {};
++}
++
++int ApplyBeamNGInterpolationCount(Config* config, FGOutput output, int requestedMultiplier)
++{
++    const auto profile = GetBeamNGFrameGenerationProfile(beamNGStartupUpscaler);
++    const int multiplier = std::clamp(requestedMultiplier, 2, profile.maximumMultiplier);
++
++    if (output == FGOutput::DLSSG)
++        config->FGDLSSGInterpolationCount.set_volatile_value(multiplier - 1);
++    else if (output == FGOutput::XeFG)
++        config->FGXeFGInterpolationCount.set_volatile_value(1);
++
++    return multiplier;
++}
++
 +void TraceBeamNGShutdown(const char* message, bool truncate = false)
 +{
 +    const auto settingsPath = BeamNGSettingsPath();
@@ -577,46 +675,68 @@ index 821cafa..02b6468 100644
 +        return;
 +    lastPoll = now;
 +
-+    const auto path = BeamNGSettingsPath();
-+    if (path.empty())
++    const auto settings = ReadBeamNGFrameGenerationSettings();
++    if (!settings.has_value())
 +        return;
 +
-+    std::ifstream settingsFile(path);
-+    if (!settingsFile)
-+        return;
-+
-+    const auto settings = nlohmann::json::parse(settingsFile, nullptr, false);
-+    if (settings.is_discarded() || !settings.is_object())
-+        return;
-+
-+    const auto enabledIt = settings.find(BeamNGFGEnabledKey);
-+    const auto multiplierIt = settings.find(BeamNGFGMultiplierKey);
-+    if (enabledIt == settings.end() || !enabledIt->is_boolean() || multiplierIt == settings.end() ||
-+        !multiplierIt->is_number_integer())
-+        return;
-+
-+    const bool enabled = enabledIt->get<bool>();
-+    const int multiplier = std::clamp(multiplierIt->get<int>(), 2, 4);
-+    const int interpolationCount = multiplier - 1;
 +    auto* config = Config::Instance();
++    const auto activeOutput = State::Instance().activeFgOutput;
++    const bool upscalerChanged = settings->upscaler != beamNGStartupUpscaler;
++    const bool enabled = settings->enabled && !upscalerChanged;
++    const int previousDlssCount = config->FGDLSSGInterpolationCount.value_or_default();
++    const int previousXeCount = config->FGXeFGInterpolationCount.value_or_default();
++    const int multiplier = ApplyBeamNGInterpolationCount(config, activeOutput, settings->multiplier);
 +
 +    const bool enabledChanged = config->IsFGEnabled() != enabled;
-+    const bool multiplierChanged = config->FGDLSSGInterpolationCount.value_or_default() != interpolationCount;
++    const bool multiplierChanged = previousDlssCount != config->FGDLSSGInterpolationCount.value_or_default() ||
++                                   previousXeCount != config->FGXeFGInterpolationCount.value_or_default();
 +    if (!enabledChanged && !multiplierChanged)
 +        return;
 +
 +    config->FGEnabled.set_volatile_value(enabled);
-+    config->FGDLSSGInterpolationCount.set_volatile_value(interpolationCount);
 +    State::Instance().fgChanged = true;
 +
 +    if (!pathLogged)
 +    {
-+        LOG_INFO("BeamNG frame-generation settings connected to {}", path.string());
++        LOG_INFO("BeamNG frame-generation settings connected to {}", BeamNGSettingsPath().string());
 +        pathLogged = true;
 +    }
++    if (upscalerChanged)
++        LOG_WARN("BeamNG upscaler changed from {} to {}; Frame Generation is paused until restart",
++                 beamNGStartupUpscaler, settings->upscaler);
 +    LOG_INFO("BeamNG frame-generation settings applied: enabled={}, multiplier={}x", enabled, multiplier);
 +}
 +} // namespace
++
++void FGHooks::ConfigureBeamNGFrameGeneration()
++{
++    const auto settings = ReadBeamNGFrameGenerationSettings();
++    if (!settings.has_value())
++    {
++        LOG_WARN("BeamNG settings are unavailable; keeping the packaged Frame Generation defaults");
++        return;
++    }
++
++    beamNGStartupUpscaler = settings->upscaler;
++    const auto profile = GetBeamNGFrameGenerationProfile(settings->upscaler);
++    auto* config = Config::Instance();
++
++    config->FGInput.set_volatile_value(profile.input);
++    config->FGOutput.set_volatile_value(profile.output);
++    config->FGNvngxReplacement.set_volatile_value(FGNvngxReplacement::None);
++    config->FGEnabled.set_volatile_value(settings->enabled && profile.IsSupported());
++    const int multiplier = ApplyBeamNGInterpolationCount(config, profile.output, settings->multiplier);
++
++    if (!profile.IsSupported())
++    {
++        LOG_INFO("BeamNG upscaler '{}' has no compatible Frame Generation input; Frame Generation is disabled",
++                 settings->upscaler);
++        return;
++    }
++
++    LOG_INFO("BeamNG upscaler '{}' selected FG output {} at {}x", settings->upscaler,
++             magic_enum::enum_name(profile.output), multiplier);
++}
 +
 +bool FGHooks::BeamNGShutdownRequested()
 +{
@@ -631,8 +751,8 @@ index 821cafa..02b6468 100644
  #if (XEFG_RESOURCE_REF_LIMIT == 0)
  inline static std::vector<void*> oldBackBuffers;
  #endif
-@@ -124,6 +336,8 @@ static bool RefuseUnderGameFsrFg()
- 
+@@ -124,6 +432,8 @@ static bool RefuseUnderGameFsrFg()
+
  static bool CheckForFGStatus()
  {
 +    PollBeamNGFrameGenerationSettings(true);
@@ -640,35 +760,35 @@ index 821cafa..02b6468 100644
      // Need to check overlay menu parameter, goes to places it shouldn't go
      // if (!Config::Instance()->OverlayMenu.value_or_default())
      //    return false;
-@@ -242,6 +456,9 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
+@@ -242,6 +552,9 @@ HRESULT FGHooks::CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI
              pDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
          }
- 
+
 +        pDesc->BufferDesc.Format =
 +            BeamNGHdrBridge::TranslateFormat(pDesc->BufferDesc.Format, BeamNGHdrBridge::IsActive());
 +
          scResult = fg->CreateSwapchain(pFactory, cq, pDesc, ppSwapChain, true);
- 
+
          // Looks like game is creating new swapchain,
-@@ -356,6 +573,8 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
+@@ -356,6 +669,8 @@ HRESULT FGHooks::CreateSwapChainForHwnd(IDXGIFactory* pFactory, IUnknown* pDevic
              pDesc->SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
          }
- 
+
 +        pDesc->Format = BeamNGHdrBridge::TranslateFormat(pDesc->Format, BeamNGHdrBridge::IsActive());
 +
          scResult = fg->CreateSwapchain1(pFactory, cq, hWnd, pDesc, pFullscreenDesc, ppSwapChain, true);
- 
+
          // Looks like game is creating new swapchain,
-@@ -464,6 +683,8 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
+@@ -464,6 +779,8 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
      o_FGSCGetFullscreenDesc = (PFN_GetFullscreenDesc) pFactoryVTable[19];
      o_FGSCPresent1 = (PFN_Present1) pFactoryVTable[22];
      o_FGSCGetFrameLatencyWaitableObject = (PFN_GetFrameLatencyWaitableObject) pFactoryVTable[33];
 +    o_FGSCCheckColorSpaceSupport = (PFN_CheckColorSpaceSupport) pFactoryVTable[37];
 +    o_FGSCSetColorSpace1 = (PFN_SetColorSpace1) pFactoryVTable[38];
      o_FGSCResizeBuffers1 = (PFN_ResizeBuffers1) pFactoryVTable[39];
- 
+
      if (o_FGSCPresent != nullptr)
-@@ -477,6 +698,8 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
+@@ -477,6 +794,8 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
          LOG_TRACE("FGSCResizeTarget: {:X}", (size_t) o_FGSCResizeTarget);
          LOG_TRACE("FGSCGetFullscreenDesc: {:X}", (size_t) o_FGSCGetFullscreenDesc);
          LOG_TRACE("FGSCPresent1: {:X}", (size_t) o_FGSCPresent1);
@@ -676,11 +796,11 @@ index 821cafa..02b6468 100644
 +        LOG_TRACE("FGSCSetColorSpace1: {:X}", (size_t) o_FGSCSetColorSpace1);
          LOG_TRACE("FGSCResizeBuffers1: {:X}", (size_t) o_FGSCResizeBuffers1);
          LOG_TRACE("FGSCGetFrameLatencyWaitableObject: {:X}", (size_t) o_FGSCGetFrameLatencyWaitableObject);
- 
-@@ -495,6 +718,12 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
+
+@@ -495,6 +814,12 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
          if (o_FGSCResizeBuffers1 != nullptr)
              DetourAttach(&(PVOID&) o_FGSCResizeBuffers1, hkResizeBuffers1);
- 
+
 +        if (o_FGSCCheckColorSpaceSupport != nullptr)
 +            DetourAttach(&(PVOID&) o_FGSCCheckColorSpaceSupport, hkCheckColorSpaceSupport);
 +
@@ -690,7 +810,7 @@ index 821cafa..02b6468 100644
          if (State::Instance().activeFgOutput == FGOutput::XeFG)
          {
              if (o_FGSCGetFullscreenState != nullptr)
-@@ -524,6 +753,8 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
+@@ -524,6 +849,8 @@ void FGHooks::HookFGSwapchain(IDXGISwapChain* pSwapChain)
              o_FGSCResizeTarget = nullptr;
              o_FGSCGetFullscreenDesc = nullptr;
              o_FGSCPresent1 = nullptr;
@@ -699,7 +819,7 @@ index 821cafa..02b6468 100644
              o_FGSCResizeBuffers1 = nullptr;
              o_FGSCGetFrameLatencyWaitableObject = nullptr;
          }
-@@ -669,6 +900,9 @@ HRESULT FGHooks::hkGetFullscreenState(IDXGISwapChain* This, BOOL* pFullscreen, I
+@@ -669,6 +996,9 @@ HRESULT FGHooks::hkGetFullscreenState(IDXGISwapChain* This, BOOL* pFullscreen, I
  HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat,
                                   UINT SwapChainFlags)
  {
@@ -709,14 +829,14 @@ index 821cafa..02b6468 100644
      // Skip XeFG's internal call
      if (_skipResize)
      {
-@@ -859,11 +1093,25 @@ HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Wi
+@@ -859,11 +1189,25 @@ HRESULT FGHooks::hkResizeBuffers(IDXGISwapChain* This, UINT BufferCount, UINT Wi
      }
- 
+
      _skipResize1 = false;
 +    RollBackBeamNGHdrFormatTransition(hdrTransition, result);
- 
+
      LOG_DEBUG("Result: {:X}, Caller: {}", (UINT) result, Util::WhoIsTheCaller(_ReturnAddress()));
- 
+
      if (result == S_OK)
      {
 +        if (hdrTransition.managesState && o_FGSCSetColorSpace1 != nullptr)
@@ -735,7 +855,7 @@ index 821cafa..02b6468 100644
          if (fg != nullptr)
          {
              State::Instance().fgChanged = true;
-@@ -914,6 +1162,10 @@ HRESULT FGHooks::hkResizeTarget(IDXGISwapChain* This, const DXGI_MODE_DESC* pNew
+@@ -914,6 +1258,10 @@ HRESULT FGHooks::hkResizeTarget(IDXGISwapChain* This, const DXGI_MODE_DESC* pNew
  HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT Format,
                                    UINT SwapChainFlags, const UINT* pCreationNodeMask, IUnknown* const* ppPresentQueue)
  {
@@ -746,14 +866,14 @@ index 821cafa..02b6468 100644
      // Skip XeFG's internal call
      if (_skipResize1)
      {
-@@ -1110,10 +1362,25 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT
+@@ -1110,10 +1458,25 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT
          _skipResize = false;
      }
- 
+
 +    RollBackBeamNGHdrFormatTransition(hdrTransition, result);
 +
      LOG_DEBUG("Result: {:X}, Caller: {}", (UINT) result, Util::WhoIsTheCaller(_ReturnAddress()));
- 
+
      if (result == S_OK)
      {
 +        if (hdrTransition.managesState && o_FGSCSetColorSpace1 != nullptr)
@@ -772,10 +892,10 @@ index 821cafa..02b6468 100644
          if (fg != nullptr)
          {
              State::Instance().fgChanged = true;
-@@ -1141,6 +1408,30 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT
+@@ -1141,6 +1504,30 @@ HRESULT FGHooks::hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT
      return result;
  }
- 
+
 +HRESULT FGHooks::hkCheckColorSpaceSupport(IDXGISwapChain3* This, DXGI_COLOR_SPACE_TYPE ColorSpace,
 +                                          UINT* pColorSpaceSupport)
 +{
@@ -803,23 +923,34 @@ index 821cafa..02b6468 100644
  HRESULT FGHooks::hkFGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags)
  {
      // Skip XeFG's internal call
-@@ -1212,6 +1503,8 @@ HRESULT FGHooks::hkFGPresent1(IDXGISwapChain1* This, UINT SyncInterval, UINT Fla
+@@ -1212,6 +1599,8 @@ HRESULT FGHooks::hkFGPresent1(IDXGISwapChain1* This, UINT SyncInterval, UINT Fla
  HRESULT FGHooks::FGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags,
                             const DXGI_PRESENT_PARAMETERS* pPresentParameters)
  {
 +    PollBeamNGFrameGenerationSettings();
 +
      _lastPresentFlags = Flags;
- 
+
      auto& state = State::Instance();
 diff --git a/FrameGenNGEngine/hooks/FG_Hooks.h b/FrameGenNGEngine/hooks/FG_Hooks.h
-index 6da5b76..9298897 100644
+index 6da5b76..d35db8f 100644
 --- a/FrameGenNGEngine/hooks/FG_Hooks.h
 +++ b/FrameGenNGEngine/hooks/FG_Hooks.h
-@@ -24,6 +24,12 @@ class FGHooks
+@@ -7,6 +7,10 @@
+ class FGHooks
+ {
+   public:
++    // Selects the matching FG engine from BeamNG's saved upscaler before the
++    // renderer copies Config into its active state.
++    static void ConfigureBeamNGFrameGeneration();
++
+     static HRESULT CreateSwapChain(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI_SWAP_CHAIN_DESC* pDesc,
+                                    IDXGISwapChain** ppSwapChain);
+
+@@ -24,6 +28,12 @@ class FGHooks
      static void ClearDx12InteropPresentSC(IUnknown* pSwapChain);
      static bool IsDx12InteropPresentSC(IUnknown* pSwapChain);
- 
+
 +    // BeamNG writes its shutdown marker before it starts tearing down NGX/D3D12.
 +    // Native NGX teardown is unsafe after this point; Windows will reclaim those
 +    // resources when the process exits.
@@ -829,7 +960,7 @@ index 6da5b76..9298897 100644
    private:
      using PFN_Present = rewrite_signature<decltype(&IDXGISwapChain::Present)>::type;
      using PFN_Present1 = rewrite_signature<decltype(&IDXGISwapChain1::Present1)>::type;
-@@ -32,6 +38,9 @@ class FGHooks
+@@ -32,6 +42,9 @@ class FGHooks
      using PFN_GetFullscreenDesc = rewrite_signature<decltype(&IDXGISwapChain1::GetFullscreenDesc)>::type;
      using PFN_ResizeBuffers = rewrite_signature<decltype(&IDXGISwapChain::ResizeBuffers)>::type;
      using PFN_ResizeBuffers1 = rewrite_signature<decltype(&IDXGISwapChain3::ResizeBuffers1)>::type;
@@ -839,7 +970,7 @@ index 6da5b76..9298897 100644
      using PFN_ResizeTarget = rewrite_signature<decltype(&IDXGISwapChain::ResizeTarget)>::type;
      using PFN_GetFrameLatencyWaitableObject =
          rewrite_signature<decltype(&IDXGISwapChain2::GetFrameLatencyWaitableObject)>::type;
-@@ -40,6 +49,8 @@ class FGHooks
+@@ -40,6 +53,8 @@ class FGHooks
      inline static PFN_ResizeBuffers o_FGSCResizeBuffers = nullptr;
      inline static PFN_ResizeTarget o_FGSCResizeTarget = nullptr;
      inline static PFN_ResizeBuffers1 o_FGSCResizeBuffers1 = nullptr;
@@ -848,7 +979,7 @@ index 6da5b76..9298897 100644
      inline static PFN_SetFullscreenState o_FGSCSetFullscreenState = nullptr;
      inline static PFN_GetFullscreenState o_FGSCGetFullscreenState = nullptr;
      inline static PFN_GetFullscreenDesc o_FGSCGetFullscreenDesc = nullptr;
-@@ -69,6 +80,9 @@ class FGHooks
+@@ -69,6 +84,9 @@ class FGHooks
      static HRESULT hkResizeBuffers1(IDXGISwapChain3* This, UINT BufferCount, UINT Width, UINT Height,
                                      DXGI_FORMAT Format, UINT SwapChainFlags, const UINT* pCreationNodeMask,
                                      IUnknown* const* ppPresentQueue);
@@ -856,9 +987,9 @@ index 6da5b76..9298897 100644
 +                                            UINT* pColorSpaceSupport);
 +    static HRESULT hkSetColorSpace1(IDXGISwapChain3* This, DXGI_COLOR_SPACE_TYPE ColorSpace);
      static ULONG hkFGRelease(IUnknown* This);
- 
+
      static HRESULT hkFGPresent(IDXGISwapChain* This, UINT SyncInterval, UINT Flags);
-@@ -86,6 +100,8 @@ class FGHooks
+@@ -86,6 +104,8 @@ class FGHooks
      VALIDATE_MEMBER_HOOK(hkGetFullscreenDesc, PFN_GetFullscreenDesc)
      VALIDATE_MEMBER_HOOK(hkResizeBuffers, PFN_ResizeBuffers)
      VALIDATE_MEMBER_HOOK(hkResizeBuffers1, PFN_ResizeBuffers1)
@@ -873,14 +1004,14 @@ index 682ac48..8d9d346 100644
 +++ b/FrameGenNGEngine/inputs/NVNGX_DLSS_Dx12.cpp
 @@ -17,6 +17,7 @@
  #include <imgui/ImGuiNotify.hpp>
- 
+
  #include <hooks/D3D12_Hooks.h>
 +#include <hooks/FG_Hooks.h>
- 
+
  #include <dxgi1_4.h>
  #include <shared_mutex>
 @@ -369,6 +370,17 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D12_Init_with_ProjectID(
- 
+
  NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D12_Shutdown(void)
  {
 +    if (FGHooks::BeamNGShutdownRequested())
@@ -896,9 +1027,9 @@ index 682ac48..8d9d346 100644
 +
      shutdown = true;
      State::Instance().nvngxDx12Inited = false;
- 
+
 @@ -428,6 +440,17 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D12_Shutdown(void)
- 
+
  NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D12_Shutdown1(ID3D12Device* InDevice)
  {
 +    if (FGHooks::BeamNGShutdownRequested())
@@ -914,11 +1045,11 @@ index 682ac48..8d9d346 100644
 +
      shutdown = true;
      State::Instance().nvngxDx12Inited = false;
- 
+
 @@ -820,6 +843,12 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_D3D12_ReleaseFeature(NVSDK_NGX_Handle*
      if (!InHandle)
          return NVSDK_NGX_Result_Success;
- 
+
 +    if (FGHooks::BeamNGShutdownRequested())
 +    {
 +        FGHooks::TraceBeamNGShutdownEvent("native-ngx-release-feature-skipped-at-process-exit");
@@ -926,7 +1057,7 @@ index 682ac48..8d9d346 100644
 +    }
 +
      auto handleId = InHandle->Id;
- 
+
      // Clean up framegen
 diff --git a/FrameGenNGEngine/misc/BeamNGHdrBridge.h b/FrameGenNGEngine/misc/BeamNGHdrBridge.h
 new file mode 100644
@@ -1161,8 +1292,64 @@ index db54720..af73169 100644
 -        .defaults = { DxgiSpoofing = false },
 +        .defaults = { DxgiSpoofing = false, FGPreserveSwapChain = false },
      },
- 
+
      // Red Dead Redemption 2
+diff --git a/FrameGenNGEngine/proxies/Streamline_Proxy.h b/FrameGenNGEngine/proxies/Streamline_Proxy.h
+index 16a8353..66c08aa 100644
+--- a/FrameGenNGEngine/proxies/Streamline_Proxy.h
++++ b/FrameGenNGEngine/proxies/Streamline_Proxy.h
+@@ -426,24 +426,29 @@ class StreamlineProxy
+         _isInitializing = false;
+
+         sl::AdapterInfo adapterInfo {};
+-        if (StreamlineProxy::IsFeatureSupported()(sl::kFeatureDLSS_G, adapterInfo) != sl::Result::eOk)
++        const auto dlssgSupport = StreamlineProxy::IsFeatureSupported()(sl::kFeatureDLSS_G, adapterInfo);
++        if (dlssgSupport != sl::Result::eOk)
+         {
++            LOG_ERROR("DLSS Frame Generation is unavailable (slIsFeatureSupported result: {}). "
++                      "FrameGenNG will not select an unbundled replacement.",
++                      (int) dlssgSupport);
++
+             if (State::Instance().activeFgNvngx == FGNvngxReplacement::None)
+             {
+-                Config::Instance()->FGNvngxReplacement = FGNvngxReplacement::Nukems;
+-                Config::Instance()->SaveIni();
+-
+                 MessageBoxW(NULL,
+-                            L"You've tried to use real DLSSG, but it's not supported\n"
+-                            "Opti will try to use a replacement, restart the game",
+-                            L"No DLSSG Support", MB_ICONWARNING | MB_OK);
+-
+-                std::exit(1);
++                            L"NVIDIA DLSS Frame Generation could not be initialized.\n\n"
++                            L"FrameGenNG did not select a fallback or change your configuration. "
++                            L"Check Hardware-accelerated GPU scheduling, the NVIDIA driver, and "
++                            L"the FrameGenNG diagnostic logs.",
++                            L"FrameGenNG - DLSS Frame Generation unavailable", MB_ICONWARNING | MB_OK);
+             }
+             else
+             {
+                 LOG_ERROR("FG Nvngx replacement was selected but SL failed to init DLSSG");
+             }
++
++            State::EnableChecks(owner);
++            return false;
+         }
+
+         State::EnableChecks(owner);
+@@ -456,6 +461,12 @@ class StreamlineProxy
+         if (_isD3D12Inited)
+             return true;
+
++        if (_isD3D12Requested)
++        {
++            LOG_ERROR("Streamline initialization was already attempted for D3D12 and did not complete");
++            return false;
++        }
++
+         // A Vulkan game's D3D12 devices, like the ones for interop, don't get it back
+         if (_isVulkanRequested)
+         {
 diff --git a/FrameGenNGEngine/resource_tracking/ResTrack_dx12.cpp b/FrameGenNGEngine/resource_tracking/ResTrack_dx12.cpp
 index 240ccb5..7be9ef7 100644
 --- a/FrameGenNGEngine/resource_tracking/ResTrack_dx12.cpp
@@ -1171,7 +1358,7 @@ index 240ccb5..7be9ef7 100644
  #include "pch.h"
  #include "ResTrack_dx12.h"
 +#include <misc/BeamNGHdrBridge.h>
- 
+
  #include <Config.h>
  #include <State.h>
 @@ -569,16 +570,13 @@ void ResTrack_Dx12::hkCreateRenderTargetView(ID3D12Device* This, ID3D12Resource*
@@ -1190,7 +1377,7 @@ index 240ccb5..7be9ef7 100644
 -                else
 -                    pDesc->Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 +                pDesc->Format = DXGI_FORMAT_R10G10B10A2_UNORM;
- 
+
                  break;
              }
 @@ -619,16 +617,13 @@ void ResTrack_Dx12::hkCreateShaderResourceView(ID3D12Device* This, ID3D12Resourc
@@ -1209,7 +1396,7 @@ index 240ccb5..7be9ef7 100644
 -                else
 -                    pDesc->Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 +                pDesc->Format = DXGI_FORMAT_R10G10B10A2_UNORM;
- 
+
                  break;
              }
 @@ -669,16 +664,13 @@ void ResTrack_Dx12::hkCreateUnorderedAccessView(ID3D12Device* This, ID3D12Resour
@@ -1228,7 +1415,7 @@ index 240ccb5..7be9ef7 100644
 -                else
 -                    pDesc->Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
 +                pDesc->Format = DXGI_FORMAT_R10G10B10A2_UNORM;
- 
+
                  break;
              }
 diff --git a/FrameGenNGEngine/wrapped/wrapped_swapchain.cpp b/FrameGenNGEngine/wrapped/wrapped_swapchain.cpp
@@ -1239,12 +1426,12 @@ index dc70036..47068b4 100644
  #include "pch.h"
  #include "wrapped_swapchain.h"
 +#include <misc/BeamNGHdrBridge.h>
- 
+
  #include <Util.h>
  #include <Config.h>
 @@ -542,8 +543,11 @@ static HRESULT LocalPresent(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT
  }
- 
+
  WrappedIDXGISwapChain4::WrappedIDXGISwapChain4(IDXGISwapChain* real, IUnknown* pDevice, HWND hWnd, UINT flags,
 -                                               bool isUWP)
 -    : _real(real), _device(pDevice), _handle(hWnd), _refcount(1), _uwp(isUWP)
@@ -1274,12 +1461,12 @@ index dc70036..47068b4 100644
 +    }
 +
      LOG_DEBUG("");
- 
+
  #ifdef USE_LOCAL_MUTEX
 @@ -1009,53 +1026,28 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers(UINT BufferCount
          State::Instance().lastMipBiasMax = -100.0f;
      }
- 
+
 -    // Crude implementation of EndlesslyFlowering's AutoHDR-ReShade
 -    // https://github.com/EndlesslyFlowering/AutoHDR-ReShade
 -    if (Config::Instance()->ForceHDR.value_or_default())
@@ -1287,7 +1474,7 @@ index dc70036..47068b4 100644
      {
 -        LOG_INFO("Force HDR on");
 +        _beamNgHdr10BridgeActive = requestedHdrBridgeMode;
- 
+
 -        do
 +        const bool bridgeModeChanged = requestedHdrBridgeMode != previousHdrBridgeMode;
 +        if (_ownsBeamNgHdrBridgeState && _real3 != nullptr &&
@@ -1347,10 +1534,10 @@ index dc70036..47068b4 100644
 +        if (_ownsBeamNgHdrBridgeState)
 +            BeamNGHdrBridge::Publish(previousHdrBridgeMode);
      }
- 
+
      State::Instance().scBuffers.clear();
 @@ -1241,10 +1233,21 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::CheckColorSpaceSupport(DXGI_CO
- 
+
  HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::SetColorSpace1(DXGI_COLOR_SPACE_TYPE ColorSpace)
  {
 +    const bool requestedHdrBridgeMode = _ownsBeamNgHdrBridgeState
@@ -1362,14 +1549,14 @@ index dc70036..47068b4 100644
 +        ColorSpace = BeamNGHdrBridge::TranslateColorSpace(ColorSpace, requestedHdrBridgeMode);
 +
      auto result = _real3->SetColorSpace1(ColorSpace);
- 
+
      if (SUCCEEDED(result))
      {
 +        _beamNgHdr10BridgeActive = requestedHdrBridgeMode;
 +        if (_ownsBeamNgHdrBridgeState)
 +            BeamNGHdrBridge::Publish(requestedHdrBridgeMode);
          UpdateOutputColorSpace(ColorSpace);
- 
+
          CheckForHdrOutput();
 @@ -1262,6 +1265,19 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers1(UINT BufferCoun
                                                                   const UINT* pCreationNodeMask,
@@ -1389,12 +1576,12 @@ index dc70036..47068b4 100644
 +    }
 +
      LOG_DEBUG("");
- 
+
  #ifdef USE_LOCAL_MUTEX
 @@ -1435,50 +1451,28 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::ResizeBuffers1(UINT BufferCoun
          State::Instance().lastMipBiasMax = -100.0f;
      }
- 
+
 -    // Crude implementation of EndlesslyFlowering's AutoHDR-ReShade
 -    // https://github.com/EndlesslyFlowering/AutoHDR-ReShade
 -    if (Config::Instance()->ForceHDR.value_or_default())
@@ -1402,7 +1589,7 @@ index dc70036..47068b4 100644
      {
 -        LOG_INFO("Force HDR on");
 +        _beamNgHdr10BridgeActive = requestedHdrBridgeMode;
- 
+
 -        do
 +        const bool bridgeModeChanged = requestedHdrBridgeMode != previousHdrBridgeMode;
 +        if (_ownsBeamNgHdrBridgeState && _real3 != nullptr &&
@@ -1459,7 +1646,7 @@ index dc70036..47068b4 100644
 +        if (_ownsBeamNgHdrBridgeState)
 +            BeamNGHdrBridge::Publish(previousHdrBridgeMode);
      }
- 
+
      State::Instance().scBuffers.clear();
 diff --git a/FrameGenNGEngine/wrapped/wrapped_swapchain.h b/FrameGenNGEngine/wrapped/wrapped_swapchain.h
 index dd2a9dd..9c113a9 100644
@@ -1473,63 +1660,13 @@ index dd2a9dd..9c113a9 100644
 +    WrappedIDXGISwapChain4(IDXGISwapChain* real, IUnknown* pDevice, HWND hWnd, UINT flags, bool isUWP,
 +                           bool beamNgHdr10BridgeActive = false, bool ownsBeamNgHdrBridgeState = false);
      virtual ~WrappedIDXGISwapChain4();
- 
+
      // implement IUnknown
-@@ -90,6 +91,8 @@ class DECLSPEC_UUID("3af622a3-82d0-49cd-994f-cce05122c222") WrappedIDXGISwapChai
+@@ -90,5 +91,7 @@ class DECLSPEC_UUID("3af622a3-82d0-49cd-994f-cce05122c222") WrappedIDXGISwapChai
      bool _uwp = false;
      LONG _refcount;
      UINT _lastFlags = 0;
 +    bool _beamNgHdr10BridgeActive = false;
 +    bool _ownsBeamNgHdrBridgeState = false;
- 
+
      IUnknown* _device = nullptr;
- 
-diff --git a/FrameGenNGEngine/proxies/Streamline_Proxy.h b/FrameGenNGEngine/proxies/Streamline_Proxy.h
-index 16a8353..66c08aa 100644
---- a/FrameGenNGEngine/proxies/Streamline_Proxy.h
-+++ b/FrameGenNGEngine/proxies/Streamline_Proxy.h
-@@ -428,15 +428,17 @@ class StreamlineProxy
-         sl::AdapterInfo adapterInfo {};
--        if (StreamlineProxy::IsFeatureSupported()(sl::kFeatureDLSS_G, adapterInfo) != sl::Result::eOk)
-+        const auto dlssgSupport = StreamlineProxy::IsFeatureSupported()(sl::kFeatureDLSS_G, adapterInfo);
-+        if (dlssgSupport != sl::Result::eOk)
-         {
-+            LOG_ERROR("DLSS Frame Generation is unavailable (slIsFeatureSupported result: {}). "
-+                      "FrameGenNG will not select an unbundled replacement.",
-+                      (int) dlssgSupport);
-+
-             if (State::Instance().activeFgNvngx == FGNvngxReplacement::None)
-             {
--                Config::Instance()->FGNvngxReplacement = FGNvngxReplacement::Nukems;
--                Config::Instance()->SaveIni();
--
-                 MessageBoxW(NULL,
--                            L"You've tried to use real DLSSG, but it's not supported\n"
--                            "Opti will try to use a replacement, restart the game",
--                            L"No DLSSG Support", MB_ICONWARNING | MB_OK);
--
--                std::exit(1);
-+                            L"NVIDIA DLSS Frame Generation could not be initialized.\n\n"
-+                            L"FrameGenNG did not select a fallback or change your configuration. "
-+                            L"Check Hardware-accelerated GPU scheduling, the NVIDIA driver, and "
-+                            L"the FrameGenNG diagnostic logs.",
-+                            L"FrameGenNG - DLSS Frame Generation unavailable", MB_ICONWARNING | MB_OK);
-             }
-@@ -446,2 +448,5 @@ class StreamlineProxy
-             }
-+
-+            State::EnableChecks(owner);
-+            return false;
-         }
-@@ -459,3 +464,9 @@ class StreamlineProxy
--        // A Vulkan game's D3D12 devices, like the ones for interop, don't get it back
--        if (_isVulkanRequested)
-+        if (_isD3D12Requested)
-+        {
-+            LOG_ERROR("Streamline initialization was already attempted for D3D12 and did not complete");
-+            return false;
-+        }
-+
-+        // A Vulkan game's D3D12 devices, like the ones for interop, don't get it back
-+        if (_isVulkanRequested)
-         {
