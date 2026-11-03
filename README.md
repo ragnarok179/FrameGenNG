@@ -2,31 +2,24 @@
 
 Frame Generation integrated into the BeamNG.drive graphics settings.
 
-FrameGenNG adds Frame Generation below BeamNG's native upscaling settings. DirectX 12 is the primary renderer; Vulkan support is experimental. The current release supports recognized NVIDIA RTX GPUs from the Turing, Ampere, Ada, and Blackwell generations, including matching professional RTX models.
+FrameGenNG adds Frame Generation below BeamNG's native upscaling options. It supports NVIDIA DLSS-G on RTX 20, 30, 40, and 50 GPUs and matching professional RTX models, AMD FidelityFX Frame Generation with FSR 3/4, and Intel XeSS Frame Generation with XeSS.
 
-- **NVIDIA DLSS-G:** RTX 20 and RTX 30 use the compatibility path powered by `dlssg_for_sm86`; RTX 40 and RTX 50 use the native path. Multipliers up to 4× are available when supported by the selected path.
-- **AMD FidelityFX Frame Generation:** available at 2× with BeamNG's FSR 3 and FSR 4 modes on every RTX generation supported by FrameGenNG. FSR 3 Frame Generation is vendor-independent upstream, but this FrameGenNG release does not yet install on non-RTX GPUs. Selecting FSR 4 does not unlock FSR 4 upscaling on unsupported hardware; the AMD runtime may use its FSR 3 fallback.
-- **Intel XeSS Frame Generation:** available at 2× with BeamNG's XeSS mode on every RTX generation supported by FrameGenNG through Intel's cross-vendor DP4a path. Intel-only Multi Frame Generation is not used.
-
-Non-RTX GPUs and future unrecognized RTX architectures are not supported by the current installer.
+- **DLSS-G:** up to 4×; RTX 20/30 use the compatibility path and RTX 40/50 use the native path.
+- **FidelityFX and XeSS-FG:** 2× on supported FrameGenNG configurations.
+- **Current installer:** requires a recognized NVIDIA RTX GPU. Non-RTX GPUs are not yet supported.
 
 ## Requirements
 
 - Windows 10 version 2004 (build 19041) or newer, or Windows 11, 64-bit
-- A recognized NVIDIA RTX GPU from the supported generations above
-- BeamNG.drive running in DirectX 12, or Vulkan when using the experimental FidelityFX path
+- A recognized NVIDIA RTX GPU with an up-to-date driver; R580 or newer is recommended for the RTX 20/30 compatibility path
+- BeamNG.drive running in DirectX 12, or Vulkan with the experimental FidelityFX path
 - DLSS, FSR 3, FSR 4, or XeSS selected in BeamNG
 - Hardware-accelerated GPU scheduling enabled in Windows
-- An up-to-date NVIDIA driver; R580 or newer is recommended for the RTX 20/30 compatibility path
 - Enough free VRAM for Frame Generation
 
 ## Using Frame Generation
 
-Frame Generation creates additional images between the frames rendered by the game. For example, 60 base FPS at 2× can produce up to 120 displayed FPS, while 30 base FPS at 3× can produce up to 90 displayed FPS.
-
-The multiplier does not replace a good base frame rate. A game running at 5 base FPS will not feel smooth simply because 4× reports up to 20 displayed FPS. Low base FPS can still cause high latency and visible interpolation artifacts, so 2× remains the recommended setting.
-
-FrameGenNG selects the matching engine when BeamNG starts. Both SDR and HDR are supported on DirectX 12 and Vulkan; Vulkan keeps BeamNG's native scRGB presentation path.
+Frame Generation inserts images between rendered frames. For example, 60 base FPS at 2× can display up to 120 FPS, while 30 FPS at 3× can reach 90 FPS. It cannot make a very low base frame rate feel smooth, so 2× is recommended.
 
 | Renderer | BeamNG upscaler | Frame Generation | Multiplier |
 | --- | --- | --- | --- |
@@ -35,30 +28,24 @@ FrameGenNG selects the matching engine when BeamNG starts. Both SDR and HDR are 
 | DirectX 12 | XeSS | Intel XeSS-FG | 2× |
 | Vulkan | FSR 3 or FSR 4 | AMD FidelityFX | 2× |
 
-FidelityFX, XeSS-FG, and Vulkan support are experimental. BeamNG's selected FSR mode remains responsible for upscaling; FrameGenNG uses FidelityFX only to generate the intermediate frame.
+DirectX 12 is recommended. FidelityFX, XeSS-FG, and Vulkan support are experimental. Restart BeamNG after changing the upscaler or Frame Generation engine. FSR 4 upscaling remains limited to hardware supported by AMD.
 
-Restart BeamNG after selecting a different upscaler or Frame Generation engine. Switching between DLSS-G, FidelityFX, and XeSS-FG is only applied after a game restart.
-
-BeamNG's FPS counter only reports the base frames rendered by the game. Press **Alt+R** to open the NVIDIA App performance overlay and see the displayed frame rate including generated frames.
-
-For more stable results, limit the base frame rate and keep normal GPU usage around 80–90% in the NVIDIA overlay. This leaves headroom for demanding scenes.
+BeamNG reports only the base frame rate. Press **Alt+R** for the NVIDIA App overlay and the displayed FPS including generated frames. For stable results, limit the base FPS and leave roughly 10–20% GPU headroom.
 
 ## Quick installation
 
 1. Close BeamNG.drive.
-2. Extract the `FrameGenNG` folder directly into the BeamNG root folder. (You can find it through Steam: Library → Right-click BeamNG.drive → Manage → Browse local files.)
+2. Extract the `FrameGenNG` folder directly into the BeamNG root folder. (Steam: Library → Right-click BeamNG.drive → Manage → Browse local files.)
 3. Open `FrameGenNG Manager.vbs`.
 4. Select **Install**.
 5. Start BeamNG and select a compatible renderer and upscaler from the table above.
-6. Restart the game after changing the upscaler, then manually enable and configure Frame Generation directly below the upscaling settings in **Options → Graphics**.
+6. Restart the game, then enable Frame Generation below the upscaling settings in **Options → Graphics**.
 
-Frame Generation is disabled after the first installation so an incompatible configuration cannot prevent BeamNG from starting. After you enable it, FrameGenNG keeps your selected state and multiplier across normal game restarts. Automatic updates and **Reinstall after game update** also preserve these settings.
+Frame Generation starts disabled after installation. Your selected state and multiplier are preserved across normal restarts, automatic updates, and **Reinstall after game update**.
 
-BeamNG will warn about `dxgi.dll` and, on RTX 20/30, `d3d12.dll`. This is expected: these proxy libraries load the FrameGenNG graphics layer. Select **Cancel** in that warning if you do not want BeamNG to show it again.
+BeamNG will warn about `dxgi.dll` and, on RTX 20/30, `d3d12.dll`; this is expected. Select **Cancel** in that warning if you do not want it to appear again.
 
-Other graphics injectors or wrappers that install their own `dxgi.dll` or `d3d12.dll` next to the BeamNG executable may conflict with FrameGenNG. Remove or disable the other injector before installing FrameGenNG.
-
-The Steam Overlay remains available for Steam Input and Steam Controller support. Other known third-party overlays stay blocked by the Frame Generation renderer for stability.
+Other graphics injectors using these filenames may conflict with FrameGenNG. The Steam Overlay remains available for Steam Input and Steam Controller support; other known third-party overlays stay blocked for stability.
 
 ## Safe removal and recovery
 
@@ -80,9 +67,7 @@ After every BeamNG update, close the game, open FrameGenNG Manager, and select *
 
 The manager checks official stable GitHub Releases when it opens. Select **Update to v…** to download, verify, and install an available update. Settings and the previous working package are preserved so the updater can roll back automatically if installation fails. Drafts and prereleases are ignored.
 
-If an automatic update does not complete correctly, open the manager and select **Uninstall**. Then download the latest release from the [FrameGenNG releases page](https://github.com/ragnarok179/FrameGenNG/releases/latest), replace the old `FrameGenNG` package folder, and install the new version manually.
-
-Expand **Details** inside the manager to inspect operation and update messages.
+If an automatic update does not complete correctly, select **Uninstall**, download the [latest release](https://github.com/ragnarok179/FrameGenNG/releases/latest), replace the package folder, and install it manually. Expand **Details** to inspect operation and update messages.
 
 ## License and credits
 
