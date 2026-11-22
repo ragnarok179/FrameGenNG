@@ -7,6 +7,7 @@ $script:DiagnosticLogSizeLimit = 2MB
 $script:DiagnosticExportLimit = 5
 $script:DiagnosticNativeLogLimit = 5
 $script:DiagnosticTransactionLogLimit = 5
+$script:DiagnosticCrashDumpLimit = 5
 $script:DiagnosticTextTailLines = 12000
 
 function Get-FrameGenNGDiagnosticRoot {
@@ -40,6 +41,49 @@ function Set-FrameGenNGAdvancedDiagnostics {
     $value = [pscustomobject][ordered]@{ schemaVersion = 1; advancedDiagnostics = $Enabled }
     [System.IO.File]::WriteAllText($path, ($value | ConvertTo-Json -Depth 5), [System.Text.UTF8Encoding]::new($false))
     return $value
+}
+
+function Set-FrameGenNGNativeDiagnosticLogging {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$GameRoot,
+        [Parameter(Mandatory)][bool]$Enabled
+    )
+
+    $configPath = Join-Path $GameRoot 'Bin64\FrameGenNG.ini'
+    if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) { return $false }
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.AddRange([string[]](Get-Content -LiteralPath $configPath))
+    $logSectionIndex = -1
+    $nextSectionIndex = $lines.Count
+    for ($index = 0; $index -lt $lines.Count; $index++) {
+        if ($lines[$index].Trim() -ieq '[Log]') {
+            $logSectionIndex = $index
+            continue
+        }
+        if ($logSectionIndex -ge 0 -and $index -gt $logSectionIndex -and $lines[$index].Trim() -match '^\[.+\]$') {
+            $nextSectionIndex = $index
+            break
+        }
+    }
+    if ($logSectionIndex -lt 0) { throw "The [Log] section is missing from $configPath" }
+
+    $value = if ($Enabled) { 'true' } else { 'false' }
+    $settingIndex = -1
+    for ($index = $logSectionIndex + 1; $index -lt $nextSectionIndex; $index++) {
+        if ($lines[$index] -match '^\s*LogToFile\s*=') {
+            $settingIndex = $index
+            break
+        }
+    }
+    if ($settingIndex -ge 0) {
+        $lines[$settingIndex] = "LogToFile=$value"
+    } else {
+        $lines.Insert($nextSectionIndex, "LogToFile=$value")
+    }
+    [System.IO.File]::WriteAllLines($configPath, $lines, [System.Text.UTF8Encoding]::new($false))
+    return $true
 }
 
 function Write-FrameGenNGDiagnosticLog {
@@ -93,9 +137,111 @@ function Get-FrameGenNGDiagnosticSummary {
 function Copy-DiagnosticTextTail {
     param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$Destination, [int]$Lines = $script:DiagnosticTextTailLines)
     if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) { return $false }
-    $content = @(Get-Content -LiteralPath $Source -Tail $Lines -ErrorAction Stop)
-    [System.IO.File]::WriteAllLines($Destination, $content, [System.Text.UTF8Encoding]::new($false))
+
+    $tail = [System.Collections.Generic.Queue[string]]::new()
+    $share = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+    $stream = [System.IO.FileStream]::new($Source, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $share)
+    try {
+        $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $true)
+        try {
+            while (-not $reader.EndOfStream) {
+                if ($tail.Count -ge $Lines) { $null = $tail.Dequeue() }
+                $tail.Enqueue($reader.ReadLine())
+            }
+        } finally {
+            $reader.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+
+    [System.IO.File]::WriteAllLines($Destination, $tail.ToArray(), [System.Text.UTF8Encoding]::new($false))
     return $true
+}
+
+function Get-FrameGenNGNativeDiagnosticLogs {
+    param([Parameter(Mandatory)][string]$GameRoot)
+
+    $binRoot = Join-Path $GameRoot 'Bin64'
+    $rendererLogRoot = Join-Path $binRoot 'FGNGEngine\logs'
+    $files = [System.Collections.Generic.List[System.IO.FileInfo]]::new()
+
+    if (Test-Path -LiteralPath $binRoot -PathType Container) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $binRoot -File -Force -ErrorAction SilentlyContinue | Where-Object {
+            if ($_.Name -match '^(FrameGenNG|FGNG|RTXMFG).*\.(log|json|jsonl)$') { return $true }
+            if ($_.Extension -ine '.log') { return $false }
+
+            try {
+                $share = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+                $stream = [System.IO.FileStream]::new($_.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $share)
+                try {
+                    $reader = [System.IO.StreamReader]::new($stream, [System.Text.Encoding]::UTF8, $true)
+                    try { return ($reader.ReadLine() -match 'FrameGenNG') } finally { $reader.Dispose() }
+                } finally { $stream.Dispose() }
+            } catch {
+                return $false
+            }
+        })) {
+            $files.Add($file)
+        }
+    }
+    if (Test-Path -LiteralPath $rendererLogRoot -PathType Container) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $rendererLogRoot -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Extension -match '^\.(log|json|jsonl)$' })) {
+            $files.Add($file)
+        }
+    }
+
+    return @($files | Sort-Object LastWriteTime -Descending | Select-Object -First $script:DiagnosticNativeLogLimit)
+}
+
+function Get-FrameGenNGCrashDumpMetadata {
+    $crashDumpRoot = Join-Path $env:LOCALAPPDATA 'CrashDumps'
+    if (-not (Test-Path -LiteralPath $crashDumpRoot -PathType Container)) { return @() }
+
+    return @(Get-ChildItem -LiteralPath $crashDumpRoot -Filter 'BeamNG.drive*.dmp' -File -Force -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First $script:DiagnosticCrashDumpLimit |
+        ForEach-Object {
+            $processId = $null
+            if ($_.Name -match '\.(?<processId>\d+)\.dmp$') { $processId = [int]$Matches.processId }
+            [pscustomobject][ordered]@{
+                name = $_.Name
+                processId = $processId
+                sizeBytes = [long]$_.Length
+                lastWriteTime = $_.LastWriteTime.ToString('o')
+                path = $_.FullName
+            }
+        })
+}
+
+function Get-FrameGenNGBeamNGSettingsSnapshot {
+    param([Parameter(Mandatory)][string]$UserRoot)
+
+    $settingsPath = Join-Path $UserRoot 'settings\settings.json'
+    if (-not (Test-Path -LiteralPath $settingsPath -PathType Leaf)) { return $null }
+
+    try {
+        $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+    } catch {
+        return [pscustomobject][ordered]@{ error = $_.Exception.Message }
+    }
+
+    $snapshot = [ordered]@{}
+    foreach ($name in @(
+        'GraphicAntialiasType',
+        'GraphicUpscalingQuality',
+        'GraphicHDREnabled',
+        'GraphicHDROutputModeName',
+        'GraphicDisplayModes',
+        'GraphicDisplayResolutions',
+        'GraphicDisplayRefreshRate',
+        'GraphicFullscreen',
+        'BeamNGFrameGenerationEnabled',
+        'BeamNGFrameGenerationMultiplier'
+    )) {
+        if ($settings.PSObject.Properties.Name -contains $name) { $snapshot[$name] = $settings.$name }
+    }
+    return [pscustomobject]$snapshot
 }
 
 function Export-FrameGenNGDiagnosticBundle {
@@ -147,9 +293,41 @@ function Export-FrameGenNGDiagnosticBundle {
         foreach ($name in @('beamng.log','beamng.1.log')) {
             Copy-DiagnosticTextTail -Source (Join-Path $UserRoot $name) -Destination (Join-Path $beamngLogsRoot $name) | Out-Null
         }
+        foreach ($name in @('beamng-launcher.log','beamng-launcher.1.log')) {
+            Copy-DiagnosticTextTail -Source (Join-Path $UserRoot $name) -Destination (Join-Path $beamngLogsRoot $name) | Out-Null
+        }
+
+        $shutdownRoot = Join-Path $stageRoot 'shutdown'
+        New-Item -ItemType Directory -Path $shutdownRoot -Force | Out-Null
+        foreach ($name in @('frame_generation_shutdown.log','frame_generation_shutdown.signal','frame_generation_runtime.state')) {
+            Copy-DiagnosticTextTail -Source (Join-Path $UserRoot "temp\$name") -Destination (Join-Path $shutdownRoot $name) | Out-Null
+        }
+
+        $settingsSnapshot = Get-FrameGenNGBeamNGSettingsSnapshot -UserRoot $UserRoot
+        if ($null -ne $settingsSnapshot) {
+            [System.IO.File]::WriteAllText(
+                (Join-Path $stageRoot 'beamng-settings.json'),
+                ($settingsSnapshot | ConvertTo-Json -Depth 10),
+                [System.Text.UTF8Encoding]::new($false))
+        }
+
+        $crashDumps = @(Get-FrameGenNGCrashDumpMetadata)
+        if ($crashDumps.Count -gt 0) {
+            [System.IO.File]::WriteAllText(
+                (Join-Path $stageRoot 'crash-dumps.json'),
+                ($crashDumps | ConvertTo-Json -Depth 10),
+                [System.Text.UTF8Encoding]::new($false))
+        }
+
+        $nativeConfigRoot = Join-Path $stageRoot 'native-config'
+        New-Item -ItemType Directory -Path $nativeConfigRoot -Force | Out-Null
+        foreach ($name in @('FrameGenNG.ini','FGNGEngine.ini')) {
+            $source = Join-Path (Join-Path $GameRoot 'Bin64') $name
+            if (Test-Path -LiteralPath $source -PathType Leaf) { Copy-Item -LiteralPath $source -Destination (Join-Path $nativeConfigRoot $name) -Force }
+        }
         $nativeLogsRoot = Join-Path $stageRoot 'native-logs'
         New-Item -ItemType Directory -Path $nativeLogsRoot -Force | Out-Null
-        foreach ($file in @(Get-ChildItem -LiteralPath (Join-Path $GameRoot 'Bin64') -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(FrameGenNG|FGNG).*\.log$' } | Sort-Object LastWriteTime -Descending | Select-Object -First $script:DiagnosticNativeLogLimit)) {
+        foreach ($file in @(Get-FrameGenNGNativeDiagnosticLogs -GameRoot $GameRoot)) {
             Copy-DiagnosticTextTail -Source $file.FullName -Destination (Join-Path $nativeLogsRoot $file.Name) | Out-Null
         }
         $managerLogsRoot = Join-Path $diagnosticRoot 'manager-logs'
@@ -181,6 +359,7 @@ function Export-FrameGenNGDiagnosticBundle {
 Export-ModuleMember -Function @(
     'Get-FrameGenNGManagerSettings',
     'Set-FrameGenNGAdvancedDiagnostics',
+    'Set-FrameGenNGNativeDiagnosticLogging',
     'Write-FrameGenNGDiagnosticLog',
     'Get-FrameGenNGDiagnosticSummary',
     'Export-FrameGenNGDiagnosticBundle'

@@ -38,6 +38,16 @@ Streamline and NGX DLLs remain subject to NVIDIA's terms. They are loaded as sep
 - Streamline : <https://github.com/NVIDIAGameWorks/Streamline>
 - NVIDIA DLSS : <https://developer.nvidia.com/rtx/dlss>
 
+## MFG Unlocker
+
+- Project: <https://github.com/dashdogy/MFG-Unlocker>
+- Integrated version: 1.7.1
+- License: MIT (`licenses/MFGUnlocker_LICENSE.txt`)
+- Packaged file: `FrameGenNGMFG.asi`
+- SHA-256: `5a389e6cad23b2b607e1dc224e9e86ee32d6ef46f0557b6c6f8137feadf0aa74`
+
+The NativeRTX profile loads this component from FrameGenNG's private plugin folder to provide Ada multi-frame capability and upstream BeamNG/pacing fixes. Its own interface is disabled; BeamNG's FrameGenNG controls remain authoritative. RTX 20/30 keep their existing compatibility path.
+
 ## AMD FidelityFX
 
 FrameGenNG includes the DirectX 12 FidelityFX loader and Frame Generation provider, plus the monolithic FidelityFX SDK 1.1.4 Vulkan provider distributed with the pinned OptiScaler dependency set. They are loaded from FrameGenNG's private runtime folder and do not replace BeamNG's FidelityFX files.

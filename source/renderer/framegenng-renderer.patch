@@ -87,19 +87,6 @@ index c738e4e..82e69ef 100644
          // Initial state of FG
          State::Instance().activeFgInput = Config::Instance()->FGInput.value_or_default();
          State::Instance().activeFgOutput = Config::Instance()->FGOutput.value_or_default();
-@@ -1794,12 +1796,6 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
-             !Config::Instance()->DisableOverlays.has_value())
-             Config::Instance()->DisableOverlays.set_volatile_value(true);
-
--        if (Config::Instance()->DisableOverlays.value_or_default())
--        {
--            _wputenv_s(L"SteamNoOverlayUIDrawing", L"1");
--            SetEnvironmentVariableW(L"SteamNoOverlayUIDrawing", L"1");
--        }
--
-         // FSR4 Watermark, overrides environment variable only if set in config
-         // The driver only checks whether the variable exists so disabling has to remove it
-         if (Config::Instance()->Fsr4EnableWatermark.has_value())
 @@ -1939,21 +1935,22 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
          // unhookAdvapi32();
          // DetachHooks();
@@ -1670,3 +1657,74 @@ index dd2a9dd..9c113a9 100644
 +    bool _ownsBeamNgHdrBridgeState = false;
 
      IUnknown* _device = nullptr;
+diff --git a/FrameGenNGEngine/framegen/dlssg/DLSSG_Common.h b/FrameGenNGEngine/framegen/dlssg/DLSSG_Common.h
+--- a/FrameGenNGEngine/framegen/dlssg/DLSSG_Common.h
++++ b/FrameGenNGEngine/framegen/dlssg/DLSSG_Common.h
+@@ -8,7 +8,9 @@ class DLSSG_Common : public virtual IFGFeature
+ {
+   protected:
+     sl::ViewportHandle _viewport { 0 };
+     sl::FrameToken* _frameToken = nullptr;
++    int _lastLoggedRequestedCount = -1;
++    int _lastLoggedRuntimeMaximum = -1;
+-
++
+     // Max interpolation count and DMFG support, once the swapchain exists
+     void QueryState();
+diff --git a/FrameGenNGEngine/framegen/dlssg/DLSSG_Common.cpp b/FrameGenNGEngine/framegen/dlssg/DLSSG_Common.cpp
+--- a/FrameGenNGEngine/framegen/dlssg/DLSSG_Common.cpp
++++ b/FrameGenNGEngine/framegen/dlssg/DLSSG_Common.cpp
+@@ -67,9 +67,11 @@ void DLSSG_Common::QueryState()
+     if (StreamlineProxy::DLSSGGetState()(_viewport, dlssgState, &dlssgOptions) == sl::Result::eOk)
+     {
+         State::Instance().dlssgMfgMax = dlssgState.numFramesToGenerateMax;
+         _maxInterpolationCount = dlssgState.numFramesToGenerateMax;
+-        LOG_INFO("Max supported interpolations: {}", dlssgState.numFramesToGenerateMax);
++        LOG_INFO("DLSS-G runtime state: effective={}x, maximum={}x, dynamicMfgSupported={}",
++                 dlssgOptions.numFramesToGenerate + 1, dlssgState.numFramesToGenerateMax + 1,
++                 dlssgState.bIsDynamicMFGSupported == sl::Boolean::eTrue);
+-
++
+         _supportsDMFG = dlssgState.bIsDynamicMFGSupported == sl::Boolean::eTrue;
+     }
+ }
+@@ -79,22 +81,24 @@ void DLSSG_Common::SetOptions(bool gameMarkersReachStreamline)
+ {
+     auto config = Config::Instance();
+-
++
+-    if (config->FGDLSSGInterpolationCount.value_or_default() > _maxInterpolationCount)
+-    {
+-        config->FGDLSSGInterpolationCount = _maxInterpolationCount;
+-        LOG_WARN("Requested interpolation count is higher than max supported, setting to max: {}",
+-                 _maxInterpolationCount);
+-    }
+-
+-    const int targetCount =
+-        std::clamp(config->FGInterpolationCount(config->FGDLSSGInterpolationCount.value_or_default()), 1,
+-                   std::max(_maxInterpolationCount, 1));
++    const int requestedCount =
++        std::max(config->FGInterpolationCount(config->FGDLSSGInterpolationCount.value_or_default()), 1);
++    const int runtimeMaximum = std::max(_maxInterpolationCount, 1);
++    const int targetCount = std::clamp(requestedCount, 1, runtimeMaximum);
+-
++
+     if (_framesToInterpolate != targetCount)
+     {
+-        LOG_INFO("Interpolation count changed {} -> {}", _framesToInterpolate, targetCount);
+-
+         _framesToInterpolate = targetCount;
+     }
++    if (requestedCount != _lastLoggedRequestedCount || runtimeMaximum != _lastLoggedRuntimeMaximum)
++    {
++        LOG_INFO("DLSS-G multiplier request: requested={}x, effective={}x, runtimeMaximum={}x",
++                 requestedCount + 1, targetCount + 1, runtimeMaximum + 1);
++        if (requestedCount > runtimeMaximum)
++            LOG_WARN("DLSS-G runtime rejected the requested multiplier; using {}x without changing the saved setting",
++                     targetCount + 1);
++        _lastLoggedRequestedCount = requestedCount;
++        _lastLoggedRuntimeMaximum = runtimeMaximum;
++    }
+-
++
+     sl::DLSSGOptions options {};

@@ -404,8 +404,27 @@ function Select-NvidiaRtxProfile {
     return $resolved[0]
 }
 
-function Get-NvidiaRtxProfile {
-    param([ValidateSet('Auto', 'LegacyRTX', 'NativeRTX')][string]$Profile = 'Auto')
+function Get-WindowsGraphicsAdapterNames {
+    try {
+        $names = @(Get-CimInstance Win32_VideoController -ErrorAction Stop | ForEach-Object {
+            ([string]$_.Name).Trim()
+        } | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_) -and
+            $_ -notmatch '(?i)Microsoft Basic (Display|Render)' -and
+            $_ -notmatch '(?i)Remote Display'
+        } | Select-Object -Unique)
+    } catch {
+        throw "Unable to detect the GPU. Details: $($_.Exception.Message)"
+    }
+
+    if ($names.Count -eq 0) {
+        throw 'Unable to detect a hardware graphics adapter.'
+    }
+    return $names
+}
+
+function Get-FrameGenNGProfile {
+    param([ValidateSet('Auto', 'LegacyRTX', 'NativeRTX', 'Universal')][string]$Profile = 'Auto')
 
     if ($Profile -ne 'Auto') {
         return [pscustomobject]@{ Profile = $Profile; Gpu = 'Profile forced from the command line' }
@@ -413,21 +432,30 @@ function Get-NvidiaRtxProfile {
 
     $driverAdapters = @(Get-NvidiaRtxAdaptersFromDriver)
     if ($driverAdapters.Count -gt 0) {
-        return Select-NvidiaRtxProfile -Adapters $driverAdapters
+        $resolvedAdapters = @($driverAdapters | ForEach-Object {
+            Resolve-NvidiaRtxAdapterProfile -Name ([string]$_.Name) -ComputeCapability ([string]$_.ComputeCapability)
+        } | Where-Object { $null -ne $_ })
+        if ($resolvedAdapters.Count -eq $driverAdapters.Count) {
+            return Select-NvidiaRtxProfile -Adapters $driverAdapters
+        }
+        return [pscustomobject]@{
+            Profile = 'Universal'
+            Gpu = (@($driverAdapters | ForEach-Object { [string]$_.Name }) -join ', ')
+        }
     }
 
-    try {
-        $gpuNames = @(Get-CimInstance Win32_VideoController -ErrorAction Stop | ForEach-Object { [string]$_.Name })
-    } catch {
-        throw "Unable to detect the GPU. Use -Profile LegacyRTX or -Profile NativeRTX. Details: $($_.Exception.Message)"
-    }
+    $gpuNames = @(Get-WindowsGraphicsAdapterNames)
     $rtxAdapters = @($gpuNames | Where-Object { $_ -match '(?i)NVIDIA.*\bRTX\b' } | ForEach-Object {
         [pscustomobject]@{ Name = $_; ComputeCapability = $null }
     })
-    if ($rtxAdapters.Count -eq 0) {
-        throw "No NVIDIA RTX GPU was detected. GPUs found: $($gpuNames -join ', ')"
+    $resolvedRtxAdapters = @($rtxAdapters | ForEach-Object {
+        Resolve-NvidiaRtxAdapterProfile -Name ([string]$_.Name) -ComputeCapability $null
+    } | Where-Object { $null -ne $_ })
+    if ($rtxAdapters.Count -gt 0 -and $resolvedRtxAdapters.Count -eq $rtxAdapters.Count) {
+        return Select-NvidiaRtxProfile -Adapters $rtxAdapters
     }
-    return Select-NvidiaRtxProfile -Adapters $rtxAdapters
+
+    return [pscustomobject]@{ Profile = 'Universal'; Gpu = ($gpuNames -join ', ') }
 }
 
 function Get-FileSha256 {
@@ -561,7 +589,11 @@ function Test-IniSemanticMatch {
 
     $currentSettings = Get-IniSettings -Path $Path
     $requiredSettings = Get-IniSettings -Path $ReferencePath
+    $mutableSettings = @(
+        "Log`nLogToFile"
+    )
     foreach ($requiredSetting in $requiredSettings.GetEnumerator()) {
+        if ($mutableSettings -contains $requiredSetting.Key) { continue }
         if (-not $currentSettings.ContainsKey($requiredSetting.Key) -or
             $currentSettings[$requiredSetting.Key] -cne $requiredSetting.Value) {
             return $false
@@ -872,7 +904,10 @@ function Get-GraphicsLayoutPatch {
 }
 
 function Get-ConditionsPatch {
-    param([Parameter(Mandatory)][string]$SourcePath)
+    param(
+        [Parameter(Mandatory)][string]$SourcePath,
+        [Parameter(Mandatory)][ValidateSet('LegacyRTX', 'NativeRTX', 'Universal')][string]$Profile
+    )
     $conditions = Get-Content -LiteralPath $SourcePath -Raw
     $requiredConditions = @(
         'FrameGenNGSupportedUpscalerSelected',
@@ -889,18 +924,20 @@ function Get-ConditionsPatch {
 
     $anchor = '(?ms)(    GraphicAntialiasEnabled\(values\) \{\r?\n      return values\.GraphicAntialiasType !== "off"\r?\n    \},)'
     if ($conditions -notmatch $anchor) { throw 'Unable to find the upscaling condition insertion point.' }
-    $addition = @'
-$1
+    $supportsDlssFrameGeneration = if ($Profile -eq 'Universal') { 'false' } else { 'true' }
+    $addition = @"
+`$1
     FrameGenNGSupportedUpscalerSelected(values) {
       const isVulkan = String(SysInfo.videoAdapter.value || "").toLowerCase() === "vulkan"
+      const supportsDlssFrameGeneration = $supportsDlssFrameGeneration
       const supportedUpscalers = isVulkan
         ? ["fsr3", "fsr4"]
-        : ["dlss", "fsr3", "fsr4", "xess"]
+        : ["fsr3", "fsr4", "xess", ...(supportsDlssFrameGeneration ? ["dlss"] : [])]
       return supportedUpscalers.includes(values.GraphicAntialiasType)
     },
     FrameGenNGMultiFrameUpscalerSelected(values) {
       const isVulkan = String(SysInfo.videoAdapter.value || "").toLowerCase() === "vulkan"
-      return !isVulkan && values.GraphicAntialiasType === "dlss"
+      return $supportsDlssFrameGeneration && !isVulkan && values.GraphicAntialiasType === "dlss"
     },
     FrameGenNGFixedMultiplierUpscalerSelected(values) {
       const isVulkan = String(SysInfo.videoAdapter.value || "").toLowerCase() === "vulkan"
@@ -909,7 +946,7 @@ $1
         : ["fsr3", "fsr4", "xess"]
       return supportedUpscalers.includes(values.GraphicAntialiasType)
     },
-'@
+"@
     return [regex]::Replace($conditions, $anchor, $addition, 1)
 }
 
@@ -979,7 +1016,7 @@ function New-FrameGenNGInstallationPlan {
         [Parameter(Mandatory)][string]$PackageRoot,
         [Parameter(Mandatory)][string]$GameRoot,
         [Parameter(Mandatory)][string]$UserRoot,
-        [Parameter(Mandatory)][ValidateSet('LegacyRTX', 'NativeRTX')][string]$Profile
+        [Parameter(Mandatory)][ValidateSet('LegacyRTX', 'NativeRTX', 'Universal')][string]$Profile
     )
 
     $payloadBin = Join-Path $PackageRoot 'payload\Bin64'
@@ -989,7 +1026,18 @@ function New-FrameGenNGInstallationPlan {
         [pscustomobject]@{ Source = Join-Path $payloadBin 'FrameGenNG.ini'; Destination = Join-Path $gameBin 'FrameGenNG.ini' },
         [pscustomobject]@{ Source = Join-Path $payloadBin 'FrameGenNG'; Destination = Join-Path $gameBin 'FrameGenNG' }
     )
-    if ($Profile -eq 'LegacyRTX') {
+    if ($Profile -eq 'NativeRTX') {
+        $nativeItems += @(
+            [pscustomobject]@{
+                Source = Join-Path $payloadBin 'FrameGenNGMFG.asi'
+                Destination = Join-Path $gameBin 'FrameGenNG\plugins\FrameGenNGMFG.asi'
+            },
+            [pscustomobject]@{
+                Source = Join-Path $payloadBin 'RTXMFG-Universal.json'
+                Destination = Join-Path $gameBin 'RTXMFG-Universal.json'
+            }
+        )
+    } elseif ($Profile -eq 'LegacyRTX') {
         $nativeItems += @(
             [pscustomobject]@{ Source = Join-Path $payloadBin 'd3d12.dll'; Destination = Join-Path $gameBin 'd3d12.dll' },
             [pscustomobject]@{ Source = Join-Path $payloadBin 'FGNGEngine.ini'; Destination = Join-Path $gameBin 'FGNGEngine.ini' },
@@ -1081,7 +1129,7 @@ function Install-FrameGenNG {
     param(
         [string]$GameRoot,
         [string]$LauncherIni,
-        [ValidateSet('Auto', 'LegacyRTX', 'NativeRTX')][string]$Profile = 'Auto',
+        [ValidateSet('Auto', 'LegacyRTX', 'NativeRTX', 'Universal')][string]$Profile = 'Auto',
         [switch]$SkipRestorePoint
     )
 
@@ -1096,7 +1144,7 @@ function Install-FrameGenNG {
         throw 'FrameGenNG is already installed. Use Reinstall after BeamNG update or Uninstall.'
     }
 
-    $gpu = Get-NvidiaRtxProfile -Profile $Profile
+    $gpu = Get-FrameGenNGProfile -Profile $Profile
     $installationPlan = New-FrameGenNGInstallationPlan -PackageRoot $packageRoot -GameRoot $gameRootResolved -UserRoot $userRoot -Profile $gpu.Profile
     Remove-ValidatedLegacyUpdateResidue -Plan $installationPlan
     Assert-FrameGenNGInstallationPlan -Plan $installationPlan
@@ -1146,7 +1194,7 @@ function Install-FrameGenNG {
         $targets.Add($conditionsRecord); $index++
         New-Item -ItemType Directory -Path (Split-Path -Parent $conditionsTarget) -Force | Out-Null
         $conditionsBase = if (Test-Path -LiteralPath $conditionsTarget -PathType Leaf) { $conditionsTarget } else { $conditionsSource }
-        [System.IO.File]::WriteAllText($conditionsTarget, (Get-ConditionsPatch -SourcePath $conditionsBase), [System.Text.UTF8Encoding]::new($false))
+        [System.IO.File]::WriteAllText($conditionsTarget, (Get-ConditionsPatch -SourcePath $conditionsBase -Profile $gpu.Profile), [System.Text.UTF8Encoding]::new($false))
         $conditionsRecord.installedSha256 = Get-PathSha256 -Path $conditionsTarget
 
         foreach ($item in $lifecycleTargets) {
@@ -1248,6 +1296,25 @@ function Uninstall-FrameGenNG {
     [array]::Reverse($reverseTargets)
     foreach ($target in $reverseTargets) {
         Restore-TrackedTarget -Target $target -BackupRoot $backupRoot -AllowedRoots @($gameRootResolved, $userRoot) -RecoveryRoot $recoveryRoot -GameRoot $gameRootResolved
+    }
+
+    $mfgPluginDestination = Join-Path $gameRootResolved 'Bin64\FrameGenNG\plugins\FrameGenNGMFG.asi'
+    $installedMfgPlugin = @($state.targets | Where-Object {
+        [System.IO.Path]::GetFullPath([string]$_.destination).Equals(
+            [System.IO.Path]::GetFullPath($mfgPluginDestination),
+            [System.StringComparison]::OrdinalIgnoreCase
+        )
+    }).Count -gt 0
+    if ($installedMfgPlugin) {
+        $gameBin = Join-Path $gameRootResolved 'Bin64'
+        foreach ($artifact in @(Get-ChildItem -LiteralPath $gameBin -File -Force -ErrorAction SilentlyContinue | Where-Object {
+            $_.Name -eq 'RTXMFG-Universal.status.json' -or
+            $_.Name -match '^RTXMFG-.*\.(log|csv|dmp)$'
+        })) {
+            if (Test-PathUnderRoot -Path $artifact.FullName -Roots @($gameBin)) {
+                Remove-Item -LiteralPath $artifact.FullName -Force
+            }
+        }
     }
 
     $settingsPath = [string]$state.settingsPath
@@ -1373,7 +1440,7 @@ Export-ModuleMember -Function @(
     'Get-FrameGenNGStatus',
     'Resolve-BeamNGGameRoot',
     'Resolve-BeamNGUserRoot',
-    'Get-NvidiaRtxProfile',
+    'Get-FrameGenNGProfile',
     'Get-FrameGenNGVersion',
     'Get-FrameGenNGRestorePoints',
     'New-FrameGenNGRestorePoint',

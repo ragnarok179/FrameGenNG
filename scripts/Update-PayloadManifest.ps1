@@ -19,8 +19,17 @@ $manifest = [pscustomobject][ordered]@{
     schemaVersion = 1
     packageVersion = (Get-Content -LiteralPath (Join-Path $repoRoot 'VERSION') -Raw).Trim()
     profiles = [pscustomobject][ordered]@{
-        NativeRTX = @('Bin64/dxgi.dll', 'Bin64/FrameGenNG.ini', 'Bin64/FrameGenNG/**', 'user-mod/**')
-        LegacyRTX = @('NativeRTX', 'Bin64/d3d12.dll', 'Bin64/FGNGEngine.ini', 'Bin64/FGNGEngine/**')
+        NativeRTX = @(
+            'Bin64/dxgi.dll', 'Bin64/FrameGenNG.ini', 'Bin64/FrameGenNG/**',
+            'Bin64/FrameGenNGMFG.asi', 'Bin64/RTXMFG-Universal.json', 'user-mod/**'
+        )
+        LegacyRTX = @(
+            'Bin64/dxgi.dll', 'Bin64/FrameGenNG.ini', 'Bin64/FrameGenNG/**',
+            'Bin64/d3d12.dll', 'Bin64/FGNGEngine.ini', 'Bin64/FGNGEngine/**', 'user-mod/**'
+        )
+        Universal = @(
+            'Bin64/dxgi.dll', 'Bin64/FrameGenNG.ini', 'Bin64/FrameGenNG/**', 'user-mod/**'
+        )
     }
     files = @($files)
 }

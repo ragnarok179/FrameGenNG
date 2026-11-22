@@ -73,7 +73,7 @@ index d790b65..b008625 100644
          {
              if (auto currentFg = State::Instance().CurrentFG(); currentFg != nullptr)
                  currentFeature->TickFrozenCheck(currentFg->GetInterpolatedFrameCount());
-@@ -1014,16 +1023,18 @@ VALIDATE_HOOK(hkvkDestroySwapchainKHR, PFN_vkDestroySwapchainKHR)
+@@ -1014,14 +1023,16 @@ VALIDATE_HOOK(hkvkDestroySwapchainKHR, PFN_vkDestroySwapchainKHR)
  static void hkvkDestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapchain, const VkAllocationCallbacks* pAllocator)
  {
      if (FromFGOutput(_ReturnAddress()))
@@ -90,5 +90,28 @@ index d790b65..b008625 100644
      if (auto fg = State::Instance().currentVkFG; fg != nullptr)
      {
          ScopedFGCall fgCall {};
+
+diff --git a/FrameGenNGEngine/inputs/NVNGX_DLSS_Vk.cpp b/FrameGenNGEngine/inputs/NVNGX_DLSS_Vk.cpp
+--- a/FrameGenNGEngine/inputs/NVNGX_DLSS_Vk.cpp
++++ b/FrameGenNGEngine/inputs/NVNGX_DLSS_Vk.cpp
+@@ -7,6 +7,7 @@
+ #include "NVNGX_DLSS.h"
+ #include <framegen/nvngx/Nvngx_FG.h>
+ #include <inputs/FG/Upscaler_Inputs_Vk.h>
++#include <hooks/FG_Hooks.h>
+ #include "NVNGX_Parameter.h"
+ #include "proxies/NVNGX_Proxy.h"
  
-         if (fg->DestroySwapchain(device, swapchain, pAllocator))
+@@ -955,6 +956,12 @@ NVSDK_NGX_API NVSDK_NGX_Result NVSDK_NGX_VULKAN_ReleaseFeature(NVSDK_NGX_Handle
+     if (!InHandle)
+         return NVSDK_NGX_Result_Success;
+ 
++    if (State::Instance().isShuttingDown && FGHooks::BeamNGShutdownRequested())
++    {
++        FGHooks::TraceBeamNGShutdownEvent("vulkan-ngx-release-feature-skipped-at-process-exit");
++        return NVSDK_NGX_Result_Success;
++    }
++
+     auto handleId = InHandle->Id;
+     if (handleId < DLSS_MOD_ID_OFFSET)
+     {

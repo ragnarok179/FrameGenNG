@@ -2,24 +2,19 @@
 
 ## Target hardware
 
-| GPU | Intended path | Status |
+| Selected BeamNG upscaler | Frame Generation path | Availability |
 | --- | --- | --- |
-| GeForce RTX 20 (Turing) | FrameGenNG compatibility engine, SM75 path | Supported by the engine; not yet tested in BeamNG |
-| GeForce RTX 30 (Ampere) | FrameGenNG compatibility engine, SM86 path | Validated on RTX 3060 Laptop |
-| GeForce RTX 40 (Ada) | FrameGenNG native DLSS-G path | Not yet tested in BeamNG |
-| GeForce RTX 50 (Blackwell) | FrameGenNG native DLSS-G/MFG path | Not yet tested in BeamNG |
-| Quadro RTX and TITAN RTX (Turing) | FrameGenNG compatibility engine, SM75 path | Supported by architecture; not yet tested in BeamNG |
-| RTX A-series (Ampere) | FrameGenNG compatibility engine, SM86 path | Supported by architecture; not yet tested in BeamNG |
-| RTX Ada professional models | FrameGenNG native DLSS-G path | Supported by architecture; not yet tested in BeamNG |
-| RTX PRO Blackwell models | FrameGenNG native DLSS-G/MFG path | Supported by architecture; not yet tested in BeamNG |
-| Future RTX generations | Native profile after validation | Not guaranteed |
+| DLSS | NVIDIA DLSS Frame Generation | DirectX 12 on recognized RTX Turing, Ampere, Ada, and Blackwell GPUs |
+| FSR 3 or FSR 4 | FidelityFX Frame Generation | DirectX 12 and Vulkan when BeamNG exposes the selected FSR mode |
+| XeSS | Intel Xe Frame Generation | DirectX 12 when BeamNG and the XeFG runtime support the GPU |
 
-The manager first reads the GPU compute capability from the NVIDIA driver:
+The manager installs one of three file profiles:
 
 - SM75 and SM86: `LegacyRTX`, including the FrameGenNG compatibility `d3d12.dll` proxy;
-- SM89 and SM120: `NativeRTX`, without the SM75/SM86 proxy;
-- if the driver query is unavailable, explicit Turing, Ampere, Ada, Blackwell, GeForce, Quadro RTX, TITAN RTX, and RTX A naming patterns provide a conservative fallback;
-- unknown RTX generation: installation stops instead of guessing.
+- SM89 and SM120: `NativeRTX`, with native DLSS-G and the Ada/Blackwell helper;
+- other or unrecognized GPUs: `Universal`, containing the common FSR/XeSS renderer without NVIDIA compatibility shims.
+
+BeamNG decides whether an upscaler is available on the active GPU. FrameGenNG only shows controls for the selected supported path. An unrecognized future RTX GPU receives the safe universal profile until its architecture is validated.
 
 ## Software
 
@@ -27,14 +22,14 @@ The manager first reads the GPU compute capability from the NVIDIA driver:
 - BeamNG.drive 0.40.4
 - DirectX 12 for the primary integration, or Vulkan for the experimental FidelityFX path
 - DLSS, FSR 3, FSR 4, or XeSS selected in BeamNG
-- Hardware-accelerated GPU scheduling required
-- an up-to-date NVIDIA driver; R580 or newer is recommended for the RTX 20/30 compatibility path
+- current GPU drivers
+- Hardware-accelerated GPU scheduling for NVIDIA DLSS Frame Generation
 
 After every BeamNG update, close the game and select **Reinstall after game update** in FrameGenNG Manager before starting BeamNG again. Game updates are not detected automatically. The operation removes the previous integration, validates the current BeamNG files, and leaves FrameGenNG uninstalled if the updated files are not compatible.
 
 ## Multipliers
 
-DLSS exposes 2×, 3×, and 4×. FSR 3, FSR 4, and XeSS expose 2× because their bundled Frame Generation paths generate one intermediate frame on NVIDIA hardware. 2× remains the recommended setting.
+DLSS exposes 2×, 3×, and 4×. On RTX 40, the NativeRTX profile includes an Ada-specific MFG helper for stable 3×/4× capability and pacing. If the runtime rejects a requested multiplier, FrameGenNG keeps the setting but safely uses the highest supported value and records both values in the native log. FSR 3, FSR 4, and XeSS expose 2× because their bundled generation paths produce one intermediate frame. 2× remains the recommended setting.
 
 Higher multipliers need a stable base frame rate. At a low base frame rate they can increase input latency and make interpolation artifacts more visible. Frame Generation also consumes additional VRAM according to the output resolution.
 

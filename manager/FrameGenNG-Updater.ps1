@@ -15,6 +15,21 @@ function Write-UpdateLog {
     [System.IO.File]::AppendAllText($script:LogPath, "$line`r`n", [System.Text.UTF8Encoding]::new($false))
 }
 
+function Sync-NativeDiagnosticPreference {
+    param(
+        [Parameter(Mandatory)][string]$PackageRoot,
+        [Parameter(Mandatory)][string]$GameRoot,
+        [Parameter(Mandatory)][string]$UserRoot
+    )
+
+    $diagnosticsModule = Join-Path $PackageRoot 'manager\FrameGenNG.Diagnostics.psm1'
+    if (-not (Test-Path -LiteralPath $diagnosticsModule -PathType Leaf)) { return }
+    Import-Module $diagnosticsModule -Force
+    if ($null -eq (Get-Command Set-FrameGenNGNativeDiagnosticLogging -ErrorAction SilentlyContinue)) { return }
+    $settings = Get-FrameGenNGManagerSettings -UserRoot $UserRoot
+    Set-FrameGenNGNativeDiagnosticLogging -GameRoot $GameRoot -Enabled ([bool]$settings.advancedDiagnostics) | Out-Null
+}
+
 function Test-PathInsideRoot {
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Root)
     $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
@@ -195,6 +210,7 @@ try {
         Install-FrameGenNG -GameRoot $gameRoot -LauncherIni ([string]$script:Request.launcherIni) -Profile $desiredProfile -SkipRestorePoint | Out-Null
         Set-PreservedFrameGenerationSettings -Snapshot $desiredSettings
         $installedStatus = Get-FrameGenNGStatus -GameRoot $gameRoot -LauncherIni ([string]$script:Request.launcherIni)
+        Sync-NativeDiagnosticPreference -PackageRoot $packageRoot -GameRoot $gameRoot -UserRoot ([string]$installedStatus.userRoot)
         if (-not [bool]$installedStatus.installed -or -not [bool]$installedStatus.healthy) {
             $invalidTargets = if ($installedStatus.PSObject.Properties.Name -contains 'checks') {
                 @($installedStatus.checks | Where-Object { -not $_.matchesInstalled }).Count
