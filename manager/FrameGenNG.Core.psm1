@@ -590,7 +590,8 @@ function Test-IniSemanticMatch {
     $currentSettings = Get-IniSettings -Path $Path
     $requiredSettings = Get-IniSettings -Path $ReferencePath
     $mutableSettings = @(
-        "Log`nLogToFile"
+        "Log`nLogToFile",
+        "Log`nLogLevel"
     )
     foreach ($requiredSetting in $requiredSettings.GetEnumerator()) {
         if ($mutableSettings -contains $requiredSetting.Key) { continue }

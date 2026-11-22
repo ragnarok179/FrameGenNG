@@ -1,0 +1,16 @@
+diff --git a/FrameGenNGEngine/inputs/FG/NativeUpscalerInput_Dx12.h b/FrameGenNGEngine/inputs/FG/NativeUpscalerInput_Dx12.h
+index 3c91492..005191d 100644
+--- a/FrameGenNGEngine/inputs/FG/NativeUpscalerInput_Dx12.h
++++ b/FrameGenNGEngine/inputs/FG/NativeUpscalerInput_Dx12.h
+@@ -47,4 +47,11 @@ class NativeUpscalerInputDx12 final : public IFeature_Dx12
+     bool IsWithDx12() override { return true; }
+     feature_version Version() override { return _version; }
+     Upscaler GetUpscalerType() const override { return _upscaler; }
++
++    std::optional<double> ReadUpscalerTime(void*) override { return std::nullopt; }
++
++    void ReadDetailedGpuTimes(void*, std::vector<DetailedGpuTime>& detailedGpuTimes) override
++    {
++        detailedGpuTimes.clear();
++    }
+ };

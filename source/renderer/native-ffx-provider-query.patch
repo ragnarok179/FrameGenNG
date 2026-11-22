@@ -1,0 +1,38 @@
+diff --git a/FrameGenNGEngine/inputs/FfxApi_Dx12.cpp b/FrameGenNGEngine/inputs/FfxApi_Dx12.cpp
+index 40d692e..d0d1007 100644
+--- a/FrameGenNGEngine/inputs/FfxApi_Dx12.cpp
++++ b/FrameGenNGEngine/inputs/FfxApi_Dx12.cpp
+@@ -22,6 +22,21 @@ static std::unordered_map<ffxContext, std::unique_ptr<NVNGX_Parameters>> _nvPara
+ static std::unordered_map<ffxContext, std::unique_ptr<NativeUpscalerInputDx12>> _contexts;
+ static ID3D12Device* _d3d12Device = nullptr;
+ 
++static ffxReturnCode_t QueryNativeUpscalerProviderVersion(ffxQueryDescHeader* desc)
++{
++    auto* providerDesc = reinterpret_cast<ffxQueryGetProviderVersion*>(desc);
++    const auto version = FfxApiProxy::VersionDx12_SR();
++
++    providerDesc->versionId =
++        0xF5A5'CA1Eui64 << 32 | (((version.major << 22) | (version.minor << 12) | version.patch) & 0xFFFFFFFF);
++
++    const auto versionName = std::format("{}.{}.{}", version.major, version.minor, version.patch);
++    providerDesc->versionName = _strdup(versionName.c_str());
++
++    LOG_DEBUG("Native upscaler provider version: {}", versionName);
++    return FFX_API_RETURN_OK;
++}
++
+ static void RemoveNativeInputContext(const ffxContext context)
+ {
+     const auto feature = _contexts.find(context);
+@@ -253,6 +268,11 @@ ffxReturnCode_t ffxQuery_Dx12(ffxContext* context, ffxQueryDescHeader* desc)
+     if (desc == nullptr)
+         return FFX_API_RETURN_ERROR_PARAMETER;
+ 
++    const bool isNativeUpscalerContext =
++        context != nullptr && *context != nullptr && _initParams.contains(*context);
++    if (desc->type == FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION && isNativeUpscalerContext)
++        return QueryNativeUpscalerProviderVersion(desc);
++
+     auto type = FfxApiProxy::GetIndirectType(desc);
+     LOG_DEBUG("Header type: {}, Indirect type: {}", FfxApiProxy::GetTypeName(desc->type), magic_enum::enum_name(type));
+ 

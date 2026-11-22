@@ -358,7 +358,7 @@ function Show-DiagnosticsDialog {
     $dialog.Controls.Add($advancedCheck)
 
     $advancedInfo = New-Object System.Windows.Forms.Label
-    $advancedInfo.Text = 'Keeps manager and native startup/settings logs. Restart BeamNG after changing this option. No per-frame logging is added.'
+    $advancedInfo.Text = 'Enables detailed native and per-frame logs. Restart BeamNG after changing this option.'
     $advancedInfo.Location = New-Object System.Drawing.Point(35, 73)
     $advancedInfo.Size = New-Object System.Drawing.Size(525, 34)
     $advancedInfo.ForeColor = $colors.Muted

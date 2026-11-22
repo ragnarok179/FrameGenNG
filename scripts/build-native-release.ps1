@@ -20,6 +20,10 @@ $script:PatchPaths = @(
     Join-Path $script:RendererRoot 'vulkan-output-guard.patch'
     Join-Path $script:RendererRoot 'vulkan-unsupported-passthrough.patch'
     Join-Path $script:RendererRoot 'vulkan-shutdown-boundary.patch'
+    Join-Path $script:RendererRoot 'native-upscaler-inputs.patch'
+    Join-Path $script:RendererRoot 'native-ffx-passthrough.patch'
+    Join-Path $script:RendererRoot 'native-ffx-provider-query.patch'
+    Join-Path $script:RendererRoot 'native-upscaler-timing-guard.patch'
 )
 $script:ResourceTemplatePath = Join-Path $script:RendererRoot 'FrameGenNG.rc'
 

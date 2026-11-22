@@ -1,0 +1,865 @@
+diff --git a/FrameGenNGEngine/inputs/FG/NativeUpscalerInput_Dx12.h b/FrameGenNGEngine/inputs/FG/NativeUpscalerInput_Dx12.h
+new file mode 100644
+index 0000000..3c91492
+--- /dev/null
++++ b/FrameGenNGEngine/inputs/FG/NativeUpscalerInput_Dx12.h
+@@ -0,0 +1,50 @@
++#pragma once
++
++#include <upscalers/IFeature_Dx12.h>
++
++class NativeUpscalerInputDx12 final : public IFeature_Dx12
++{
++  private:
++    Upscaler _upscaler;
++    feature_version _version;
++
++  protected:
++    bool InitInternal(ID3D12GraphicsCommandList*, NVSDK_NGX_Parameter*) override { return true; }
++    bool EvaluateInternal(ID3D12GraphicsCommandList*, NVSDK_NGX_Parameter*) override { return true; }
++
++  public:
++    NativeUpscalerInputDx12(unsigned int handleId, NVSDK_NGX_Parameter* parameters, Upscaler upscaler,
++                            feature_version version)
++        : IFeature(handleId, parameters), IFeature_Dx12(handleId, parameters), _upscaler(upscaler), _version(version)
++    {
++        SetInit(SetInitParameters(parameters));
++    }
++
++    bool BeginFrame(NVSDK_NGX_Parameter* parameters)
++    {
++        if (!IsInited() || parameters == nullptr)
++            return false;
++
++        parameters->Get(NVSDK_NGX_Parameter_Width, &_renderWidth);
++        parameters->Get(NVSDK_NGX_Parameter_Height, &_renderHeight);
++
++        auto targetWidth = _targetWidth;
++        auto targetHeight = _targetHeight;
++        GetDynamicOutputResolution(parameters, &targetWidth, &targetHeight);
++
++        if (targetWidth > 0 && targetHeight > 0)
++        {
++            _targetWidth = targetWidth;
++            _targetHeight = targetHeight;
++            _displayWidth = _targetWidth;
++            _displayHeight = _targetHeight;
++        }
++
++        ++_frameCount;
++        return true;
++    }
++
++    bool IsWithDx12() override { return true; }
++    feature_version Version() override { return _version; }
++    Upscaler GetUpscalerType() const override { return _upscaler; }
++};
+diff --git a/FrameGenNGEngine/inputs/FSR3_Dx12.cpp b/FrameGenNGEngine/inputs/FSR3_Dx12.cpp
+index 480cedf..4a243f3 100644
+--- a/FrameGenNGEngine/inputs/FSR3_Dx12.cpp
++++ b/FrameGenNGEngine/inputs/FSR3_Dx12.cpp
+@@ -6,6 +6,8 @@
+ 
+ #include "resource.h"
+ #include "NVNGX_Parameter.h"
++#include "FG/NativeUpscalerInput_Dx12.h"
++#include "FG/Upscaler_Inputs_Dx12.h"
+ 
+ #include <proxies/KernelBase_Proxy.h>
+ 
+@@ -45,15 +47,25 @@ static PFN_ffxFsr3UpscalerGetRenderResolutionFromQualityMode o_ffxFsr3UpscalerGe
+ static PFN_ffxFSR3GetInterfaceDX12 o_ffxFSR3GetInterfaceDX12 = nullptr;
+ 
+ static std::unordered_map<Fsr3::FfxFsr3UpscalerContext*, Fsr3::FfxFsr3UpscalerContextDescription> _initParams;
+-static std::unordered_map<Fsr3::FfxFsr3UpscalerContext*, NVSDK_NGX_Parameter*> _nvParams;
+-static std::unordered_map<Fsr3::FfxFsr3UpscalerContext*, NVSDK_NGX_Handle*> _contexts;
++static std::unordered_map<Fsr3::FfxFsr3UpscalerContext*, std::unique_ptr<NVNGX_Parameters>> _nvParams;
++static std::unordered_map<Fsr3::FfxFsr3UpscalerContext*, std::unique_ptr<NativeUpscalerInputDx12>> _contexts;
+ static ID3D12Device* _d3d12Device = nullptr;
+-static bool _nvnxgInited = false;
+ static bool _skipCreate = false;
+ static bool _skipDispatch = false;
+ static bool _skipDestroy = false;
+ static float qualityRatios[] = { 1.0f, 1.5f, 1.7f, 2.0f, 3.0f };
+ 
++static void RemoveNativeInputContext(Fsr3::FfxFsr3UpscalerContext* context)
++{
++    const auto feature = _contexts.find(context);
++    if (feature != _contexts.end() && State::Instance().currentFeature == feature->second.get())
++        State::Instance().currentFeature = nullptr;
++
++    _contexts.erase(context);
++    _nvParams.erase(context);
++    _initParams.erase(context);
++}
++
+ static D3D12_RESOURCE_STATES GetD3D12State(Fsr3::FfxResourceStates state)
+ {
+     switch (state)
+@@ -83,18 +95,16 @@ static D3D12_RESOURCE_STATES GetD3D12State(Fsr3::FfxResourceStates state)
+     }
+ }
+ 
+-static bool CreateDLSSContext(Fsr3::FfxFsr3UpscalerContext* handle,
+-                              const Fsr3::FfxFsr3UpscalerDispatchDescription* pExecParams)
++static bool CreateNativeInputContext(Fsr3::FfxFsr3UpscalerContext* handle,
++                                     const Fsr3::FfxFsr3UpscalerDispatchDescription* pExecParams)
+ {
+     LOG_DEBUG("");
+ 
+     if (!_nvParams.contains(handle))
+         return false;
+ 
+-    NVSDK_NGX_Handle* nvHandle = nullptr;
+-    auto params = _nvParams[handle];
++    auto* params = _nvParams[handle].get();
+     auto initParams = &_initParams[handle];
+-    auto commandList = (ID3D12GraphicsCommandList*) pExecParams->commandList;
+ 
+     UINT initFlags = 0;
+ 
+@@ -137,15 +147,102 @@ static bool CreateDLSSContext(Fsr3::FfxFsr3UpscalerContext* handle,
+     else
+         params->Set(NVSDK_NGX_Parameter_PerfQualityValue, NVSDK_NGX_PerfQuality_Value_DLAA);
+ 
+-    if (NVSDK_NGX_D3D12_CreateFeature(commandList, NVSDK_NGX_Feature_SuperSampling, params, &nvHandle) !=
+-        NVSDK_NGX_Result_Success)
++    auto feature = std::make_unique<NativeUpscalerInputDx12>(IFeature::GetNextHandleId(), params, Upscaler::FFX,
++                                                              feature_version { 3, 1, 0 });
++    if (!feature->IsInited())
+         return false;
+ 
+-    _contexts[handle] = nvHandle;
+-
++    _contexts[handle] = std::move(feature);
+     return true;
+ }
+ 
++static Fsr3::FfxErrorCode DispatchNativeFsr3(
++    Fsr3::FfxFsr3UpscalerContext* context, Fsr3::FfxFsr3UpscalerDispatchDescription* dispatchDescription)
++{
++    if (context == nullptr || dispatchDescription == nullptr || dispatchDescription->commandList == nullptr)
++        return Fsr3::FFX_ERROR_BACKEND_API_ERROR;
++
++    if (!_contexts.contains(context) &&
++        (!CreateNativeInputContext(context, dispatchDescription) || !_contexts.contains(context)))
++    {
++        LOG_WARN("Native FSR input capture is unavailable; continuing with the game's FSR dispatch");
++        _skipDispatch = true;
++        const auto result = o_ffxFsr3UpscalerContextDispatch_Dx12(context, dispatchDescription);
++        _skipDispatch = false;
++        return result;
++    }
++
++    auto* parameters = _nvParams[context].get();
++    auto* feature = _contexts[context].get();
++
++    parameters->Set(NVSDK_NGX_Parameter_Jitter_Offset_X, dispatchDescription->jitterOffset.x);
++    parameters->Set(NVSDK_NGX_Parameter_Jitter_Offset_Y, dispatchDescription->jitterOffset.y);
++    parameters->Set(NVSDK_NGX_Parameter_MV_Scale_X, dispatchDescription->motionVectorScale.x);
++    parameters->Set(NVSDK_NGX_Parameter_MV_Scale_Y, dispatchDescription->motionVectorScale.y);
++    parameters->Set(NVSDK_NGX_Parameter_DLSS_Exposure_Scale, 1.0f);
++    parameters->Set(NVSDK_NGX_Parameter_DLSS_Pre_Exposure, dispatchDescription->preExposure);
++    parameters->Set(NVSDK_NGX_Parameter_Reset, dispatchDescription->reset ? 1 : 0);
++    parameters->Set(NVSDK_NGX_Parameter_Width, dispatchDescription->renderSize.width);
++    parameters->Set(NVSDK_NGX_Parameter_Height, dispatchDescription->renderSize.height);
++    parameters->Set(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Width,
++                    dispatchDescription->renderSize.width);
++    parameters->Set(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Height,
++                    dispatchDescription->renderSize.height);
++    parameters->Set(NVSDK_NGX_Parameter_Depth, dispatchDescription->depth.resource);
++    parameters->Set(NVSDK_NGX_Parameter_ExposureTexture, dispatchDescription->exposure.resource);
++    parameters->Set(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask,
++                    dispatchDescription->reactive.resource);
++    parameters->Set(NVSDK_NGX_Parameter_Color, dispatchDescription->color.resource);
++    parameters->Set(NVSDK_NGX_Parameter_MotionVectors, dispatchDescription->motionVectors.resource);
++    parameters->Set(NVSDK_NGX_Parameter_Output, dispatchDescription->output.resource);
++    parameters->Set("FSR.cameraNear", dispatchDescription->cameraNear);
++    parameters->Set("FSR.cameraFar", dispatchDescription->cameraFar);
++    parameters->Set("FSR.cameraFovAngleVertical", dispatchDescription->cameraFovAngleVertical);
++    parameters->Set("FSR.frameTimeDelta", dispatchDescription->frameTimeDelta);
++    parameters->Set("FSR.transparencyAndComposition", dispatchDescription->transparencyAndComposition.resource);
++    parameters->Set("FSR.reactive", dispatchDescription->reactive.resource);
++    parameters->Set("FSR.viewSpaceToMetersFactor", dispatchDescription->viewSpaceToMetersFactor);
++    parameters->Set(NVSDK_NGX_Parameter_Sharpness, dispatchDescription->sharpness);
++
++    if (dispatchDescription->color.resource != nullptr && dispatchDescription->color.state > 0)
++        Config::Instance()->ColorResourceBarrier.set_volatile_value(GetD3D12State(dispatchDescription->color.state));
++    if (dispatchDescription->depth.resource != nullptr && dispatchDescription->depth.state > 0)
++        Config::Instance()->DepthResourceBarrier.set_volatile_value(GetD3D12State(dispatchDescription->depth.state));
++    if (dispatchDescription->exposure.resource != nullptr && dispatchDescription->exposure.state > 0)
++        Config::Instance()->ExposureResourceBarrier.set_volatile_value(
++            GetD3D12State(dispatchDescription->exposure.state));
++    if (dispatchDescription->motionVectors.resource != nullptr && dispatchDescription->motionVectors.state > 0)
++        Config::Instance()->MVResourceBarrier.set_volatile_value(
++            GetD3D12State(dispatchDescription->motionVectors.state));
++    if (dispatchDescription->output.resource != nullptr && dispatchDescription->output.state > 0)
++        Config::Instance()->OutputResourceBarrier.set_volatile_value(GetD3D12State(dispatchDescription->output.state));
++    if (dispatchDescription->reactive.resource != nullptr && dispatchDescription->reactive.state > 0)
++        Config::Instance()->MaskResourceBarrier.set_volatile_value(
++            GetD3D12State(dispatchDescription->reactive.state));
++
++    auto& state = State::Instance();
++    state.setInputApiName = ApiUpscalerInput::FSR3_DX12;
++    state.currentFeature = feature;
++    if (!feature->BeginFrame(parameters))
++    {
++        LOG_WARN("Native FSR input metadata is unavailable; continuing with the game's FSR dispatch");
++        _skipDispatch = true;
++        const auto result = o_ffxFsr3UpscalerContextDispatch_Dx12(context, dispatchDescription);
++        _skipDispatch = false;
++        return result;
++    }
++
++    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(dispatchDescription->commandList);
++    UpscalerInputsDx12::UpscaleStart(commandList, parameters, feature);
++
++    _skipDispatch = true;
++    const auto result = o_ffxFsr3UpscalerContextDispatch_Dx12(context, dispatchDescription);
++    _skipDispatch = false;
++
++    UpscalerInputsDx12::UpscaleEnd(commandList, parameters, feature);
++    return result;
++}
++
+ static std::optional<float> GetQualityOverrideRatioFfx(const Fsr3::FfxFsr3UpscalerQualityMode input)
+ {
+     std::optional<float> output;
+@@ -263,27 +360,8 @@ static Fsr3::FfxErrorCode ffxFsr3ContextCreate_Dx12(Fsr3::FfxFsr3UpscalerContext
+         return ccResult;
+     }
+ 
+-    if (!state.nvngxDx12Inited)
+-    {
+-        NVSDK_NGX_FeatureCommonInfo fcInfo {};
+-        auto exePath = Util::ExePath().remove_filename();
+-
+-        auto nvResult = NVSDK_NGX_D3D12_Init_with_ProjectID(
+-            OPTI_GUID, state.NVNGX_Engine, OPTI_VERSION, exePath.c_str(), _d3d12Device, &fcInfo,
+-            state.NVNGX_Version == 0 ? NVSDK_NGX_Version_API : state.NVNGX_Version);
+-
+-        if (nvResult != NVSDK_NGX_Result_Success)
+-            return Fsr3::FFX_ERROR_BACKEND_API_ERROR;
+-
+-        _nvnxgInited = true;
+-    }
+-
+-    NVSDK_NGX_Parameter* params = nullptr;
+-
+-    if (NVSDK_NGX_D3D12_GetCapabilityParameters(&params) != NVSDK_NGX_Result_Success)
+-        return Fsr3::FFX_ERROR_BACKEND_API_ERROR;
+-
+-    _nvParams[pContext] = params;
++    _nvParams[pContext] = std::unique_ptr<NVNGX_Parameters>(GetNGXParameters(API::DX12, false));
++    UpscalerInputsDx12::Init(_d3d12Device);
+ 
+     Fsr3::FfxFsr3UpscalerContextDescription ccd {};
+     ccd.flags = pContextDescription->flags;
+@@ -297,96 +375,18 @@ static Fsr3::FfxErrorCode ffxFsr3ContextCreate_Dx12(Fsr3::FfxFsr3UpscalerContext
+     return Fsr3::FFX_OK;
+ }
+ 
+-static Fsr3::FfxErrorCode ffxFsr3ContextDispatch_Dx12(Fsr3::FfxFsr3UpscalerContext* pContext,
+-                                                      Fsr3::FfxFsr3UpscalerDispatchDescription* pDispatchDescription)
++static Fsr3::FfxErrorCode ffxFsr3ContextDispatch_Dx12(
++    Fsr3::FfxFsr3UpscalerContext* pContext, Fsr3::FfxFsr3UpscalerDispatchDescription* pDispatchDescription)
+ {
+-    // Skip OptiScaler stuff
+-    if (!Config::Instance()->UseFsr3Inputs.value_or_default())
++    if (!Config::Instance()->UseFsr3Inputs.value_or_default() || _d3d12Device == nullptr)
+     {
+         _skipDispatch = true;
+-        auto result = o_ffxFsr3UpscalerContextDispatch_Dx12(pContext, pDispatchDescription);
++        const auto result = o_ffxFsr3UpscalerContextDispatch_Dx12(pContext, pDispatchDescription);
+         _skipDispatch = false;
+         return result;
+     }
+ 
+-    if (_d3d12Device == nullptr)
+-    {
+-        _skipDispatch = true;
+-        auto result = o_ffxFsr3UpscalerContextDispatch_Dx12(pContext, pDispatchDescription);
+-        _skipDispatch = false;
+-        return result;
+-    }
+-
+-    if (pDispatchDescription == nullptr || pContext == nullptr || pDispatchDescription->commandList == nullptr)
+-        return Fsr3::FFX_ERROR_BACKEND_API_ERROR;
+-
+-    // If not in contexts list create and add context
+-    if (!_contexts.contains(pContext) && _initParams.contains(pContext) &&
+-        !CreateDLSSContext(pContext, pDispatchDescription))
+-        return Fsr3::FFX_ERROR_INVALID_ARGUMENT;
+-
+-    NVSDK_NGX_Parameter* params = _nvParams[pContext];
+-    NVSDK_NGX_Handle* handle = _contexts[pContext];
+-
+-    params->Set(NVSDK_NGX_Parameter_Jitter_Offset_X, pDispatchDescription->jitterOffset.x);
+-    params->Set(NVSDK_NGX_Parameter_Jitter_Offset_Y, pDispatchDescription->jitterOffset.y);
+-    params->Set(NVSDK_NGX_Parameter_MV_Scale_X, pDispatchDescription->motionVectorScale.x);
+-    params->Set(NVSDK_NGX_Parameter_MV_Scale_Y, pDispatchDescription->motionVectorScale.y);
+-    params->Set(NVSDK_NGX_Parameter_DLSS_Exposure_Scale, 1.0);
+-    params->Set(NVSDK_NGX_Parameter_DLSS_Pre_Exposure, pDispatchDescription->preExposure);
+-    params->Set(NVSDK_NGX_Parameter_Reset, pDispatchDescription->reset ? 1 : 0);
+-    params->Set(NVSDK_NGX_Parameter_Width, pDispatchDescription->renderSize.width);
+-    params->Set(NVSDK_NGX_Parameter_Height, pDispatchDescription->renderSize.height);
+-    params->Set(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Width, pDispatchDescription->renderSize.width);
+-    params->Set(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Height, pDispatchDescription->renderSize.height);
+-    params->Set(NVSDK_NGX_Parameter_Depth, pDispatchDescription->depth.resource);
+-    params->Set(NVSDK_NGX_Parameter_ExposureTexture, pDispatchDescription->exposure.resource);
+-    params->Set(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask, pDispatchDescription->reactive.resource);
+-    params->Set(NVSDK_NGX_Parameter_Color, pDispatchDescription->color.resource);
+-    params->Set(NVSDK_NGX_Parameter_MotionVectors, pDispatchDescription->motionVectors.resource);
+-    params->Set(NVSDK_NGX_Parameter_Output, pDispatchDescription->output.resource);
+-    params->Set("FSR.cameraNear", pDispatchDescription->cameraNear);
+-    params->Set("FSR.cameraFar", pDispatchDescription->cameraFar);
+-    params->Set("FSR.cameraFovAngleVertical", pDispatchDescription->cameraFovAngleVertical);
+-    params->Set("FSR.frameTimeDelta", pDispatchDescription->frameTimeDelta);
+-    params->Set("FSR.transparencyAndComposition", pDispatchDescription->transparencyAndComposition.resource);
+-    params->Set("FSR.reactive", pDispatchDescription->reactive.resource);
+-    params->Set("FSR.viewSpaceToMetersFactor", pDispatchDescription->viewSpaceToMetersFactor);
+-    params->Set(NVSDK_NGX_Parameter_Sharpness, pDispatchDescription->sharpness);
+-
+-    if (pDispatchDescription->color.resource != nullptr && pDispatchDescription->color.state > 0)
+-        Config::Instance()->ColorResourceBarrier.set_volatile_value(GetD3D12State(pDispatchDescription->color.state));
+-
+-    if (pDispatchDescription->depth.resource != nullptr && pDispatchDescription->depth.state > 0)
+-        Config::Instance()->DepthResourceBarrier.set_volatile_value(GetD3D12State(pDispatchDescription->depth.state));
+-
+-    if (pDispatchDescription->exposure.resource != nullptr && pDispatchDescription->exposure.state > 0)
+-        Config::Instance()->ExposureResourceBarrier.set_volatile_value(
+-            GetD3D12State(pDispatchDescription->exposure.state));
+-
+-    if (pDispatchDescription->motionVectors.resource != nullptr && pDispatchDescription->motionVectors.state > 0)
+-        Config::Instance()->MVResourceBarrier.set_volatile_value(
+-            GetD3D12State(pDispatchDescription->motionVectors.state));
+-
+-    if (pDispatchDescription->output.resource != nullptr && pDispatchDescription->output.state > 0)
+-        Config::Instance()->OutputResourceBarrier.set_volatile_value(GetD3D12State(pDispatchDescription->output.state));
+-
+-    if (pDispatchDescription->reactive.resource != nullptr && pDispatchDescription->reactive.state > 0)
+-        Config::Instance()->MaskResourceBarrier.set_volatile_value(GetD3D12State(pDispatchDescription->reactive.state));
+-
+-    LOG_DEBUG("handle: {:X}, internalResolution: {}x{}", handle->Id, pDispatchDescription->renderSize.width,
+-              pDispatchDescription->renderSize.height);
+-
+-    State::Instance().setInputApiName = ApiUpscalerInput::FSR3_DX12;
+-
+-    auto evalResult = NVSDK_NGX_D3D12_EvaluateFeature((ID3D12GraphicsCommandList*) pDispatchDescription->commandList,
+-                                                      handle, params, nullptr);
+-
+-    if (evalResult == NVSDK_NGX_Result_Success)
+-        return Fsr3::FFX_OK;
+-
+-    LOG_ERROR("evalResult: {:X}", (UINT) evalResult);
+-    return Fsr3::FFX_ERROR_BACKEND_API_ERROR;
++    return DispatchNativeFsr3(pContext, pDispatchDescription);
+ }
+ 
+ static Fsr3::FfxErrorCode ffxFsr3ContextDestroy_Dx12(Fsr3::FfxFsr3UpscalerContext* pContext)
+@@ -396,12 +396,7 @@ static Fsr3::FfxErrorCode ffxFsr3ContextDestroy_Dx12(Fsr3::FfxFsr3UpscalerContex
+ 
+     LOG_DEBUG("context: {:X}", (size_t) pContext);
+ 
+-    if (_contexts.contains(pContext))
+-        NVSDK_NGX_D3D12_ReleaseFeature(_contexts[pContext]);
+-
+-    _contexts.erase(pContext);
+-    _nvParams.erase(pContext);
+-    _initParams.erase(pContext);
++    RemoveNativeInputContext(pContext);
+ 
+     _skipDestroy = true;
+     auto cdResult = o_ffxFsr3UpscalerContextDestroy_Dx12(pContext);
+@@ -467,28 +462,8 @@ ffxFsr3ContextCreate_Pattern_Dx12(Fsr3::FfxFsr3UpscalerContext* pContext,
+         return ccResult;
+     }
+ 
+-    if (!state.nvngxDx12Inited)
+-    {
+-        NVSDK_NGX_FeatureCommonInfo fcInfo {};
+-
+-        auto exePath = Util::ExePath().remove_filename();
+-
+-        auto nvResult = NVSDK_NGX_D3D12_Init_with_ProjectID(
+-            OPTI_GUID, state.NVNGX_Engine, OPTI_VERSION, exePath.c_str(), _d3d12Device, &fcInfo,
+-            state.NVNGX_Version == 0 ? NVSDK_NGX_Version_API : state.NVNGX_Version);
+-
+-        if (nvResult != NVSDK_NGX_Result_Success)
+-            return Fsr3::FFX_ERROR_BACKEND_API_ERROR;
+-
+-        _nvnxgInited = true;
+-    }
+-
+-    NVSDK_NGX_Parameter* params = nullptr;
+-
+-    if (NVSDK_NGX_D3D12_GetCapabilityParameters(&params) != NVSDK_NGX_Result_Success)
+-        return Fsr3::FFX_ERROR_BACKEND_API_ERROR;
+-
+-    _nvParams[pContext] = params;
++    _nvParams[pContext] = std::unique_ptr<NVNGX_Parameters>(GetNGXParameters(API::DX12, false));
++    UpscalerInputsDx12::Init(_d3d12Device);
+ 
+     Fsr3::FfxFsr3UpscalerContextDescription ccd {};
+     ccd.flags = pContextDescription->flags;
+@@ -506,85 +481,11 @@ static Fsr3::FfxErrorCode
+ ffxFsr3ContextDispatch_Pattern_Dx12(Fsr3::FfxFsr3UpscalerContext* pContext,
+                                     Fsr3::FfxFsr3UpscalerDispatchDescription* pDispatchDescription)
+ {
+-    // Skip OptiScaler stuff
+-    if (!Config::Instance()->UseFsr3Inputs.value_or_default() || _skipDispatch)
+-        return o_ffxFsr3UpscalerContextDispatch_Dx12(pContext, pDispatchDescription);
+-
+-    if (_d3d12Device == nullptr)
++    if (!Config::Instance()->UseFsr3Inputs.value_or_default() || _skipDispatch || _d3d12Device == nullptr)
+         return o_ffxFsr3UpscalerContextDispatch_Dx12(pContext, pDispatchDescription);
+ 
+-    if (pDispatchDescription == nullptr || pContext == nullptr || pDispatchDescription->commandList == nullptr)
+-        return Fsr3::FFX_ERROR_BACKEND_API_ERROR;
+-
+-    // If not in contexts list create and add context
+-    if (!_contexts.contains(pContext) && _initParams.contains(pContext) &&
+-        !CreateDLSSContext(pContext, pDispatchDescription))
+-        return Fsr3::FFX_ERROR_INVALID_ARGUMENT;
+-
+-    NVSDK_NGX_Parameter* params = _nvParams[pContext];
+-    NVSDK_NGX_Handle* handle = _contexts[pContext];
+-
+-    params->Set(NVSDK_NGX_Parameter_Jitter_Offset_X, pDispatchDescription->jitterOffset.x);
+-    params->Set(NVSDK_NGX_Parameter_Jitter_Offset_Y, pDispatchDescription->jitterOffset.y);
+-    params->Set(NVSDK_NGX_Parameter_MV_Scale_X, pDispatchDescription->motionVectorScale.x);
+-    params->Set(NVSDK_NGX_Parameter_MV_Scale_Y, pDispatchDescription->motionVectorScale.y);
+-    params->Set(NVSDK_NGX_Parameter_DLSS_Exposure_Scale, 1.0);
+-    params->Set(NVSDK_NGX_Parameter_DLSS_Pre_Exposure, pDispatchDescription->preExposure);
+-    params->Set(NVSDK_NGX_Parameter_Reset, pDispatchDescription->reset ? 1 : 0);
+-    params->Set(NVSDK_NGX_Parameter_Width, pDispatchDescription->renderSize.width);
+-    params->Set(NVSDK_NGX_Parameter_Height, pDispatchDescription->renderSize.height);
+-    params->Set(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Width, pDispatchDescription->renderSize.width);
+-    params->Set(NVSDK_NGX_Parameter_DLSS_Render_Subrect_Dimensions_Height, pDispatchDescription->renderSize.height);
+-    params->Set(NVSDK_NGX_Parameter_Depth, pDispatchDescription->depth.resource);
+-    params->Set(NVSDK_NGX_Parameter_ExposureTexture, pDispatchDescription->exposure.resource);
+-    params->Set(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_Mask, pDispatchDescription->reactive.resource);
+-    params->Set(NVSDK_NGX_Parameter_Color, pDispatchDescription->color.resource);
+-    params->Set(NVSDK_NGX_Parameter_MotionVectors, pDispatchDescription->motionVectors.resource);
+-    params->Set(NVSDK_NGX_Parameter_Output, pDispatchDescription->output.resource);
+-    params->Set("FSR.cameraNear", pDispatchDescription->cameraNear);
+-    params->Set("FSR.cameraFar", pDispatchDescription->cameraFar);
+-    params->Set("FSR.cameraFovAngleVertical", pDispatchDescription->cameraFovAngleVertical);
+-    params->Set("FSR.frameTimeDelta", pDispatchDescription->frameTimeDelta);
+-    params->Set("FSR.transparencyAndComposition", pDispatchDescription->transparencyAndComposition.resource);
+-    params->Set("FSR.reactive", pDispatchDescription->reactive.resource);
+-    params->Set("FSR.viewSpaceToMetersFactor", pDispatchDescription->viewSpaceToMetersFactor);
+-    params->Set(NVSDK_NGX_Parameter_Sharpness, pDispatchDescription->sharpness);
+-
+-    if (pDispatchDescription->color.resource != nullptr && pDispatchDescription->color.state > 0)
+-        Config::Instance()->ColorResourceBarrier.set_volatile_value(GetD3D12State(pDispatchDescription->color.state));
+-
+-    if (pDispatchDescription->depth.resource != nullptr && pDispatchDescription->depth.state > 0)
+-        Config::Instance()->DepthResourceBarrier.set_volatile_value(GetD3D12State(pDispatchDescription->depth.state));
+-
+-    if (pDispatchDescription->exposure.resource != nullptr && pDispatchDescription->exposure.state > 0)
+-        Config::Instance()->ExposureResourceBarrier.set_volatile_value(
+-            GetD3D12State(pDispatchDescription->exposure.state));
+-
+-    if (pDispatchDescription->motionVectors.resource != nullptr && pDispatchDescription->motionVectors.state > 0)
+-        Config::Instance()->MVResourceBarrier.set_volatile_value(
+-            GetD3D12State(pDispatchDescription->motionVectors.state));
+-
+-    if (pDispatchDescription->output.resource != nullptr && pDispatchDescription->output.state > 0)
+-        Config::Instance()->OutputResourceBarrier.set_volatile_value(GetD3D12State(pDispatchDescription->output.state));
+-
+-    if (pDispatchDescription->reactive.resource != nullptr && pDispatchDescription->reactive.state > 0)
+-        Config::Instance()->MaskResourceBarrier.set_volatile_value(GetD3D12State(pDispatchDescription->reactive.state));
+-
+-    LOG_DEBUG("handle: {:X}, internalResolution: {}x{}", handle->Id, pDispatchDescription->renderSize.width,
+-              pDispatchDescription->renderSize.height);
+-
+-    State::Instance().setInputApiName = ApiUpscalerInput::FSR3_DX12;
+-
+-    auto evalResult = NVSDK_NGX_D3D12_EvaluateFeature((ID3D12GraphicsCommandList*) pDispatchDescription->commandList,
+-                                                      handle, params, nullptr);
+-
+-    if (evalResult == NVSDK_NGX_Result_Success)
+-        return Fsr3::FFX_OK;
+-
+-    LOG_ERROR("evalResult: {:X}", (UINT) evalResult);
+-    return Fsr3::FFX_ERROR_BACKEND_API_ERROR;
++    return DispatchNativeFsr3(pContext, pDispatchDescription);
+ }
+-
+ static Fsr3::FfxErrorCode ffxFsr3ContextDestroy_Pattern_Dx12(Fsr3::FfxFsr3UpscalerContext* pContext)
+ {
+     if (pContext == nullptr)
+@@ -592,12 +493,7 @@ static Fsr3::FfxErrorCode ffxFsr3ContextDestroy_Pattern_Dx12(Fsr3::FfxFsr3Upscal
+ 
+     LOG_DEBUG("context: {:X}", (size_t) pContext);
+ 
+-    if (_contexts.contains(pContext))
+-        NVSDK_NGX_D3D12_ReleaseFeature(_contexts[pContext]);
+-
+-    _contexts.erase(pContext);
+-    _nvParams.erase(pContext);
+-    _initParams.erase(pContext);
++    RemoveNativeInputContext(pContext);
+ 
+     auto cdResult = o_ffxFsr3UpscalerContextDestroy_Dx12(pContext);
+     LOG_INFO("result: {:X}", (UINT) cdResult);
+diff --git a/FrameGenNGEngine/inputs/FfxApiExe_Dx12.cpp b/FrameGenNGEngine/inputs/FfxApiExe_Dx12.cpp
+index 0bf795a..5104d0f 100644
+--- a/FrameGenNGEngine/inputs/FfxApiExe_Dx12.cpp
++++ b/FrameGenNGEngine/inputs/FfxApiExe_Dx12.cpp
+@@ -5,6 +5,8 @@
+ 
+ #include "resource.h"
+ #include "NVNGX_Parameter.h"
++#include "FG/NativeUpscalerInput_Dx12.h"
++#include "FG/Upscaler_Inputs_Dx12.h"
+ 
+ #include <proxies/KernelBase_Proxy.h>
+ 
+@@ -22,23 +24,31 @@ inline static PfnFfxQuery _D3D12_Query = nullptr;
+ inline static PfnFfxDispatch _D3D12_Dispatch = nullptr;
+ 
+ static std::unordered_map<ffxContext, ffxCreateContextDescUpscale> _initParams;
+-static std::unordered_map<ffxContext, NVSDK_NGX_Parameter*> _nvParams;
+-static std::unordered_map<ffxContext, NVSDK_NGX_Handle*> _contexts;
++static std::unordered_map<ffxContext, std::unique_ptr<NVNGX_Parameters>> _nvParams;
++static std::unordered_map<ffxContext, std::unique_ptr<NativeUpscalerInputDx12>> _contexts;
+ static ID3D12Device* _d3d12Device = nullptr;
+-static bool _nvnxgInited = false;
+ static float qualityRatios[] = { 1.0f, 1.5f, 1.7f, 2.0f, 3.0f };
+ 
+-static bool CreateDLSSContext(ffxContext handle, const ffxDispatchDescUpscale* pExecParams)
++static void RemoveNativeInputContext(const ffxContext context)
++{
++    const auto feature = _contexts.find(context);
++    if (feature != _contexts.end() && State::Instance().currentFeature == feature->second.get())
++        State::Instance().currentFeature = nullptr;
++
++    _contexts.erase(context);
++    _nvParams.erase(context);
++    _initParams.erase(context);
++}
++
++static bool CreateNativeInputContext(ffxContext handle, const ffxDispatchDescUpscale* pExecParams)
+ {
+     LOG_DEBUG("context: {:X}", (size_t) handle);
+ 
+     if (!_nvParams.contains(handle))
+         return false;
+ 
+-    NVSDK_NGX_Handle* nvHandle = nullptr;
+-    auto params = _nvParams[handle];
++    auto* params = _nvParams[handle].get();
+     auto initParams = &_initParams[handle];
+-    auto commandList = (ID3D12GraphicsCommandList*) pExecParams->commandList;
+ 
+     UINT initFlags = 0;
+ 
+@@ -87,14 +97,12 @@ static bool CreateDLSSContext(ffxContext handle, const ffxDispatchDescUpscale* p
+     else
+         params->Set(NVSDK_NGX_Parameter_PerfQualityValue, NVSDK_NGX_PerfQuality_Value_DLAA);
+ 
+-    auto nvngxResult = NVSDK_NGX_D3D12_CreateFeature(commandList, NVSDK_NGX_Feature_SuperSampling, params, &nvHandle);
+-    if (nvngxResult != NVSDK_NGX_Result_Success)
+-    {
+-        LOG_ERROR("NVSDK_NGX_D3D12_CreateFeature error: {:X}", (UINT) nvngxResult);
++    auto feature = std::make_unique<NativeUpscalerInputDx12>(IFeature::GetNextHandleId(), params, Upscaler::FFX,
++                                                              feature_version { 4, 0, 0 });
++    if (!feature->IsInited())
+         return false;
+-    }
+ 
+-    _contexts[handle] = nvHandle;
++    _contexts[handle] = std::move(feature);
+     LOG_INFO("context created: {:X}", (size_t) handle);
+ 
+     return true;
+@@ -202,27 +210,8 @@ static ffxReturnCode_t ffxCreateContext_Dx12(ffxContext* context, ffxCreateConte
+     if (!upscaleContext)
+         return ffxApiResult;
+ 
+-    if (!State::Instance().nvngxDx12Inited)
+-    {
+-        NVSDK_NGX_FeatureCommonInfo fcInfo {};
+-        auto exePath = Util::ExePath().remove_filename();
+-
+-        auto nvResult = NVSDK_NGX_D3D12_Init_with_ProjectID(
+-            OPTI_GUID, State::Instance().NVNGX_Engine, OPTI_VERSION, exePath.c_str(), _d3d12Device, &fcInfo,
+-            State::Instance().NVNGX_Version == 0 ? NVSDK_NGX_Version_API : State::Instance().NVNGX_Version);
+-
+-        if (nvResult != NVSDK_NGX_Result_Success)
+-            return FFX_API_RETURN_ERROR_RUNTIME_ERROR;
+-
+-        _nvnxgInited = true;
+-    }
+-
+-    NVSDK_NGX_Parameter* params = nullptr;
+-
+-    if (NVSDK_NGX_D3D12_GetCapabilityParameters(&params) != NVSDK_NGX_Result_Success)
+-        return FFX_API_RETURN_ERROR_RUNTIME_ERROR;
+-
+-    _nvParams[*context] = params;
++    _nvParams[*context] = std::unique_ptr<NVNGX_Parameters>(GetNGXParameters(API::DX12, false));
++    UpscalerInputsDx12::Init(_d3d12Device);
+ 
+     ffxCreateContextDescUpscale ccd {};
+     ccd.flags = createDesc->flags;
+@@ -245,12 +234,7 @@ static ffxReturnCode_t ffxDestroyContext_Dx12(ffxContext* context, const ffxAllo
+     auto cdResult = _D3D12_DestroyContext(context, memCb);
+     LOG_INFO("result: {:X}", (UINT) cdResult);
+ 
+-    if (_contexts.contains(*context))
+-        NVSDK_NGX_D3D12_ReleaseFeature(_contexts[*context]);
+-
+-    _contexts.erase(*context);
+-    _nvParams.erase(*context);
+-    _initParams.erase(*context);
++    RemoveNativeInputContext(*context);
+ 
+     return FFX_API_RETURN_OK;
+ }
+@@ -348,12 +332,15 @@ static ffxReturnCode_t ffxDispatch_Dx12(ffxContext* context, ffxDispatchDescHead
+         return FFX_API_RETURN_ERROR_PARAMETER;
+ 
+     // If not in contexts list create and add context
+-    auto contextId = (size_t) *context;
+-    if (!_contexts.contains(*context) && _initParams.contains(*context) && !CreateDLSSContext(*context, dispatchDesc))
+-        return FFX_API_RETURN_ERROR_RUNTIME_ERROR;
++    if (!_contexts.contains(*context) && _initParams.contains(*context) &&
++        !CreateNativeInputContext(*context, dispatchDesc))
++    {
++        LOG_WARN("Native FFX input capture is unavailable; continuing with the game's FFX dispatch");
++        return _D3D12_Dispatch(context, desc);
++    }
+ 
+-    NVSDK_NGX_Parameter* params = _nvParams[*context];
+-    NVSDK_NGX_Handle* handle = _contexts[*context];
++    auto* params = _nvParams[*context].get();
++    auto* feature = _contexts[*context].get();
+ 
+     params->Set(NVSDK_NGX_Parameter_Jitter_Offset_X, dispatchDesc->jitterOffset.x);
+     params->Set(NVSDK_NGX_Parameter_Jitter_Offset_Y, dispatchDesc->jitterOffset.y);
+@@ -382,20 +369,30 @@ static ffxReturnCode_t ffxDispatch_Dx12(ffxContext* context, ffxDispatchDescHead
+     params->Set(NVSDK_NGX_Parameter_Sharpness, dispatchDesc->sharpness);
+     params->Set("FSR.upscaleSize.width", dispatchDesc->upscaleSize.width);
+     params->Set("FSR.upscaleSize.height", dispatchDesc->upscaleSize.height);
++    if (dispatchDesc->upscaleSize.width > 0 && dispatchDesc->upscaleSize.height > 0)
++    {
++        params->Set(NVSDK_NGX_Parameter_OutWidth, dispatchDesc->upscaleSize.width);
++        params->Set(NVSDK_NGX_Parameter_OutHeight, dispatchDesc->upscaleSize.height);
++    }
+ 
+-    LOG_DEBUG("handle: {:X}, internalResolution: {}x{}", handle->Id, dispatchDesc->renderSize.width,
++    LOG_DEBUG("handle: {:X}, internalResolution: {}x{}", feature->Handle()->Id, dispatchDesc->renderSize.width,
+               dispatchDesc->renderSize.height);
+ 
+-    State::Instance().setInputApiName = ApiUpscalerInput::FFX_DX12;
+-
+-    auto evalResult = NVSDK_NGX_D3D12_EvaluateFeature((ID3D12GraphicsCommandList*) dispatchDesc->commandList, handle,
+-                                                      params, nullptr);
++    auto& state = State::Instance();
++    state.setInputApiName = ApiUpscalerInput::FFX_DX12;
++    state.currentFeature = feature;
++    if (!feature->BeginFrame(params))
++    {
++        LOG_WARN("Native FFX input metadata is unavailable; continuing with the game's FFX dispatch");
++        return _D3D12_Dispatch(context, desc);
++    }
+ 
+-    if (evalResult == NVSDK_NGX_Result_Success)
+-        return FFX_API_RETURN_OK;
++    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(dispatchDesc->commandList);
++    UpscalerInputsDx12::UpscaleStart(commandList, params, feature);
++    const auto dispatchResult = _D3D12_Dispatch(context, desc);
++    UpscalerInputsDx12::UpscaleEnd(commandList, params, feature);
+ 
+-    LOG_ERROR("evalResult: {:X}", (UINT) evalResult);
+-    return FFX_API_RETURN_ERROR_RUNTIME_ERROR;
++    return dispatchResult;
+ }
+ 
+ void HookFfxExeInputs()
+diff --git a/FrameGenNGEngine/inputs/XeSS_Common.cpp b/FrameGenNGEngine/inputs/XeSS_Common.cpp
+index 05d7fe3..0e7ae11 100644
+--- a/FrameGenNGEngine/inputs/XeSS_Common.cpp
++++ b/FrameGenNGEngine/inputs/XeSS_Common.cpp
+@@ -125,6 +125,15 @@ xess_result_t hk_xessDestroyContext(xess_context_handle_t hContext)
+ {
+     LOG_DEBUG("hContext: {}", (size_t) hContext);
+ 
++    if (DestroyXeSSDx12Context(hContext))
++    {
++        _nvParams.erase(hContext);
++        _motionScales.erase(hContext);
++        _jitterScales.erase(hContext);
++        _maxResponsiveMaskValues.erase(hContext);
++        return XESS_RESULT_SUCCESS;
++    }
++
+     if (!_contexts.contains(hContext))
+         return XESS_RESULT_ERROR_INVALID_CONTEXT;
+ 
+diff --git a/FrameGenNGEngine/inputs/XeSS_Dx12.cpp b/FrameGenNGEngine/inputs/XeSS_Dx12.cpp
+index ce4dd14..aedf6f9 100644
+--- a/FrameGenNGEngine/inputs/XeSS_Dx12.cpp
++++ b/FrameGenNGEngine/inputs/XeSS_Dx12.cpp
+@@ -2,25 +2,28 @@
+ #include "XeSS_Dx12.h"
+ 
+ #include "NVNGX_Parameter.h"
++#include "FG/Upscaler_Inputs_Dx12.h"
+ 
+ #include <proxies/XeSS_Proxy.h>
++#include <upscalers/FeatureProvider_Dx12.h>
+ #include "menu/menu_overlay_dx.h"
+ 
+ static UINT64 _handleCounter = 13370000;
+ static UINT64 _frameCounter = 0;
+ static xess_context_handle_t _currentContext = nullptr;
+ static ID3D12Device* _d3d12Device = nullptr;
++static std::unordered_map<xess_context_handle_t, std::unique_ptr<NVNGX_Parameters>> _dx12Params;
++static std::unordered_map<xess_context_handle_t, std::unique_ptr<IFeature_Dx12>> _dx12Contexts;
+ 
+-static bool CreateDLSSContext(xess_context_handle_t handle, ID3D12GraphicsCommandList* commandList,
++static bool CreateXeSSContext(xess_context_handle_t handle, ID3D12GraphicsCommandList* commandList,
+                               const xess_d3d12_execute_params_t* pExecParams)
+ {
+     LOG_DEBUG("");
+ 
+-    if (!_nvParams.contains(handle))
++    if (!_dx12Params.contains(handle))
+         return false;
+ 
+-    NVSDK_NGX_Handle* nvHandle = nullptr;
+-    auto params = _nvParams[handle];
++    auto* params = _dx12Params[handle].get();
+     auto initParams = &_d3d12InitParams[handle];
+ 
+     UINT initFlags = 0;
+@@ -85,11 +88,12 @@ static bool CreateDLSSContext(xess_context_handle_t handle, ID3D12GraphicsComman
+         break;
+     }
+ 
+-    if (NVSDK_NGX_D3D12_CreateFeature(commandList, NVSDK_NGX_Feature_SuperSampling, params, &nvHandle) !=
+-        NVSDK_NGX_Result_Success)
++    std::unique_ptr<IFeature_Dx12> feature;
++    if (!FeatureProvider_Dx12::GetFeature(Upscaler::XeSS, IFeature::GetNextHandleId(), params, &feature) ||
++        feature == nullptr || !feature->Init(_d3d12Device, commandList, params))
+         return false;
+ 
+-    _contexts[handle] = nvHandle;
++    _dx12Contexts[handle] = std::move(feature);
+ 
+     return true;
+ }
+@@ -101,31 +105,13 @@ xess_result_t hk_xessD3D12CreateContext(ID3D12Device* pDevice, xess_context_hand
+     if (pDevice == nullptr)
+         return XESS_RESULT_ERROR_DEVICE;
+ 
+-    if (!State::Instance().nvngxDx12Inited)
+-    {
+-        NVSDK_NGX_FeatureCommonInfo fcInfo {};
+-
+-        auto exePath = Util::ExePath().remove_filename();
+-
+-        auto nvResult = NVSDK_NGX_D3D12_Init_with_ProjectID(
+-            OPTI_GUID, NVSDK_NGX_ENGINE_TYPE_CUSTOM, OPTI_VERSION, exePath.c_str(), pDevice, &fcInfo,
+-            State::Instance().NVNGX_Version == 0 ? NVSDK_NGX_Version_API : State::Instance().NVNGX_Version);
+-
+-        if (nvResult != NVSDK_NGX_Result_Success)
+-            return XESS_RESULT_ERROR_UNINITIALIZED;
+-    }
+-
+     _d3d12Device = pDevice;
+     *phContext = (xess_context_handle_t) ++_handleCounter;
+-
+-    NVSDK_NGX_Parameter* params = nullptr;
+-
+-    if (NVSDK_NGX_D3D12_GetCapabilityParameters(&params) != NVSDK_NGX_Result_Success)
+-        return XESS_RESULT_ERROR_INVALID_ARGUMENT;
+-
+-    _nvParams[*phContext] = params;
++    _dx12Params[*phContext] = std::unique_ptr<NVNGX_Parameters>(GetNGXParameters(API::DX12, false));
++    _nvParams[*phContext] = _dx12Params[*phContext].get();
+     _motionScales[*phContext] = { 1.0, 1.0 };
+     _maxResponsiveMaskValues[*phContext] = 1.0f;
++    UpscalerInputsDx12::Init(pDevice);
+ 
+     return XESS_RESULT_SUCCESS;
+ }
+@@ -155,11 +141,11 @@ xess_result_t hk_xessD3D12Init(xess_context_handle_t hContext, const xess_d3d12_
+ 
+     _d3d12InitParams[hContext] = ip;
+ 
+-    if (!_contexts.contains(hContext))
+-        return XESS_RESULT_SUCCESS;
++    const auto feature = _dx12Contexts.find(hContext);
++    if (feature != _dx12Contexts.end() && State::Instance().currentFeature == feature->second.get())
++        State::Instance().currentFeature = nullptr;
+ 
+-    NVSDK_NGX_D3D12_ReleaseFeature(_contexts[hContext]);
+-    _contexts.erase(hContext);
++    _dx12Contexts.erase(hContext);
+ 
+     return XESS_RESULT_SUCCESS;
+ }
+@@ -172,11 +158,11 @@ xess_result_t hk_xessD3D12Execute(xess_context_handle_t hContext, ID3D12Graphics
+     if (pCommandList == nullptr)
+         return XESS_RESULT_ERROR_INVALID_ARGUMENT;
+ 
+-    if (!_contexts.contains(hContext) && !CreateDLSSContext(hContext, pCommandList, pExecParams))
++    if (!_dx12Contexts.contains(hContext) && !CreateXeSSContext(hContext, pCommandList, pExecParams))
+         return XESS_RESULT_ERROR_UNKNOWN;
+ 
+-    NVSDK_NGX_Parameter* params = _nvParams[hContext];
+-    NVSDK_NGX_Handle* handle = _contexts[hContext];
++    auto* params = _dx12Params[hContext].get();
++    auto* feature = _dx12Contexts[hContext].get();
+     xess_d3d12_init_params_t* initParams = &_d3d12InitParams[hContext];
+ 
+     if (_motionScales.contains(hContext))
+@@ -247,12 +233,30 @@ xess_result_t hk_xessD3D12Execute(xess_context_handle_t hContext, ID3D12Graphics
+     params->Set(NVSDK_NGX_Parameter_DLSS_Input_Bias_Current_Color_SubrectBase_Y,
+                 pExecParams->inputResponsiveMaskBase.y);
+ 
+-    State::Instance().setInputApiName = ApiUpscalerInput::XeSS_DX12;
++    auto& state = State::Instance();
++    state.setInputApiName = ApiUpscalerInput::XeSS_DX12;
++    state.currentFeature = feature;
++
++    UpscalerInputsDx12::UpscaleStart(pCommandList, params, feature);
++    const auto result = feature->Evaluate(pCommandList, params) ? XESS_RESULT_SUCCESS : XESS_RESULT_ERROR_UNKNOWN;
++    UpscalerInputsDx12::UpscaleEnd(pCommandList, params, feature);
++    return result;
++}
++
++bool DestroyXeSSDx12Context(xess_context_handle_t hContext)
++{
++    const auto params = _dx12Params.find(hContext);
++    const auto feature = _dx12Contexts.find(hContext);
++    if (params == _dx12Params.end() && feature == _dx12Contexts.end())
++        return false;
+ 
+-    if (NVSDK_NGX_D3D12_EvaluateFeature(pCommandList, handle, params, nullptr) == NVSDK_NGX_Result_Success)
+-        return XESS_RESULT_SUCCESS;
++    if (feature != _dx12Contexts.end() && State::Instance().currentFeature == feature->second.get())
++        State::Instance().currentFeature = nullptr;
+ 
+-    return XESS_RESULT_ERROR_UNKNOWN;
++    _dx12Contexts.erase(hContext);
++    _dx12Params.erase(hContext);
++    _d3d12InitParams.erase(hContext);
++    return true;
+ }
+ 
+ xess_result_t hk_xessD3D12GetInitParams(xess_context_handle_t hContext, xess_d3d12_init_params_t* pInitParams)
+diff --git a/FrameGenNGEngine/inputs/XeSS_Dx12.h b/FrameGenNGEngine/inputs/XeSS_Dx12.h
+index b8d3315..91eefbe 100644
+--- a/FrameGenNGEngine/inputs/XeSS_Dx12.h
++++ b/FrameGenNGEngine/inputs/XeSS_Dx12.h
+@@ -17,3 +17,4 @@ xess_result_t hk_xessD3D12GetInitParams(xess_context_handle_t hContext, xess_d3d
+ xess_result_t hk_xessD3D12GetResourcesToDump(xess_context_handle_t hContext,
+                                              xess_resources_to_dump_t** pResourcesToDump);
+ xess_result_t hk_xessD3D12GetProfilingData(xess_context_handle_t hContext, xess_profiling_data_t** pProfilingData);
++bool DestroyXeSSDx12Context(xess_context_handle_t hContext);

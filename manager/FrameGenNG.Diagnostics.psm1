@@ -69,18 +69,24 @@ function Set-FrameGenNGNativeDiagnosticLogging {
     }
     if ($logSectionIndex -lt 0) { throw "The [Log] section is missing from $configPath" }
 
-    $value = if ($Enabled) { 'true' } else { 'false' }
-    $settingIndex = -1
-    for ($index = $logSectionIndex + 1; $index -lt $nextSectionIndex; $index++) {
-        if ($lines[$index] -match '^\s*LogToFile\s*=') {
-            $settingIndex = $index
-            break
-        }
+    $settings = [ordered]@{
+        LogToFile = if ($Enabled) { 'true' } else { 'false' }
+        LogLevel = if ($Enabled) { '1' } else { '2' }
     }
-    if ($settingIndex -ge 0) {
-        $lines[$settingIndex] = "LogToFile=$value"
-    } else {
-        $lines.Insert($nextSectionIndex, "LogToFile=$value")
+    foreach ($setting in $settings.GetEnumerator()) {
+        $settingIndex = -1
+        for ($index = $logSectionIndex + 1; $index -lt $nextSectionIndex; $index++) {
+            if ($lines[$index] -match ('^\s*{0}\s*=' -f [regex]::Escape($setting.Key))) {
+                $settingIndex = $index
+                break
+            }
+        }
+        if ($settingIndex -ge 0) {
+            $lines[$settingIndex] = "$($setting.Key)=$($setting.Value)"
+        } else {
+            $lines.Insert($nextSectionIndex, "$($setting.Key)=$($setting.Value)")
+            $nextSectionIndex++
+        }
     }
     [System.IO.File]::WriteAllLines($configPath, $lines, [System.Text.UTF8Encoding]::new($false))
     return $true
